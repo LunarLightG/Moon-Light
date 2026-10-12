@@ -11,6 +11,54 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 
+-- GitHub image loader for executor environments that support writefile/getcustomasset.
+-- URLs are configurable; defaults point to this project's Assets folder.
+local function Http(url)
+    local ok, result = pcall(function()
+        return game:HttpGet(url, true)
+    end)
+    if ok and type(result) == "string" and result ~= "" then
+        return result
+    end
+
+    local req = (syn and syn.request) or http_request or request
+    if req then
+        local ok2, response = pcall(req, {Url = url, Method = "GET"})
+        if ok2 and type(response) == "table" and response.Body and response.Body ~= "" then
+            return response.Body
+        end
+    end
+    return nil
+end
+
+local function SetCover(imageLabel, url)
+    task.spawn(function()
+        if not (writefile and getcustomasset) then
+            warn("[LunarGui] Environment does not support writefile/getcustomasset")
+            return
+        end
+        local data = Http(url)
+        if not data then
+            warn("[LunarGui] Could not load image: " .. tostring(url))
+            return
+        end
+
+        local name = "lunar_" .. tostring(url):gsub("[^%w]", "_"):sub(-40) .. ".png"
+        local ok, asset = pcall(function()
+            writefile(name, data)
+            return getcustomasset(name)
+        end)
+        if ok and asset and imageLabel and imageLabel.Parent then
+            imageLabel.Image = asset
+        else
+            warn("[LunarGui] Could not convert image: " .. tostring(asset))
+        end
+    end)
+end
+
+local DEFAULT_LOGO_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/logo.png"
+local DEFAULT_BACKGROUND_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/background.png"
+
 LunarGui.Theme = {
     Background = Color3.fromRGB(14, 11, 21),
     Panel = Color3.fromRGB(25, 20, 36),
@@ -59,6 +107,9 @@ end
 
 function LunarGui.new(options)
     options = options or {}
+    -- Image options must be Roblox asset IDs (rbxassetid://...), not raw GitHub URLs.
+    -- options.LogoImage is used in the header and floating open/close button.
+    -- options.BackgroundImage is used as the window background.
     local self = setmetatable({}, LunarGui)
     self.Name = options.Name or "LunarGui"
     self.Theme = table.clone(LunarGui.Theme)
@@ -79,12 +130,103 @@ function LunarGui.new(options)
         BorderSizePixel = 0, ClipsDescendants = true,
     }, self.Screen)
     round(self.Root, 16); outline(self.Root, self.Theme.Stroke)
-    new("UISizeConstraint", {MinSize = Vector2.new(300, 300), MaxSize = Vector2.new(950, 720)}, self.Root)
+    local rootSizeConstraint = new("UISizeConstraint", {MinSize = Vector2.new(300, 300), MaxSize = Vector2.new(950, 720)}, self.Root)
+
+    -- Floating open/close button: remains visible even when the main window is hidden.
+    self.ToggleButton = new("TextButton", {
+        Name = "LunarGuiToggle", AutoButtonColor = false, Text = "☾",
+        Font = Enum.Font.GothamBold, TextSize = 25, TextColor3 = self.Theme.Text,
+        BackgroundColor3 = self.Theme.AccentDark, BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -22, 1, -120),
+        Size = UDim2.fromOffset(52, 52), ZIndex = 300,
+    }, self.Screen)
+    round(self.ToggleButton, 26); outline(self.ToggleButton, self.Theme.Accent)
+
+    -- Reuse the uploaded Roblox logo for the floating open/close button.
+    -- options.LogoImage must be an uploaded asset ID, e.g. "rbxassetid://1234567890".
+    self.ToggleLogo = new("ImageLabel", {
+        Name = "ToggleLogo", BackgroundTransparency = 1,
+        Image = options.LogoImage or "", ScaleType = Enum.ScaleType.Fit,
+        AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5),
+        Size = UDim2.new(1, -10, 1, -10), ZIndex = 301,
+    }, self.ToggleButton)
+    SetCover(self.ToggleLogo, options.LogoUrl or DEFAULT_LOGO_URL)
+    self.ToggleButton.Text = ""
+    self.ToggleButtonHint = new("TextLabel", {
+        Name = "ToggleHint", BackgroundTransparency = 1, Text = "LUNAR",
+        Font = Enum.Font.GothamBold, TextSize = 8, TextColor3 = self.Theme.Text,
+        AnchorPoint = Vector2.new(.5, 0), Position = UDim2.new(.5, 0, 1, 1),
+        Size = UDim2.new(1, 0, 0, 12), ZIndex = 301,
+    }, self.ToggleButton)
+
+    -- Bottom-right resize grip, usable with mouse or touch.
+    self.ResizeGrip = new("TextButton", {
+        Name = "ResizeGrip", AutoButtonColor = false, Text = "◢",
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = self.Theme.Accent,
+        BackgroundColor3 = self.Theme.Panel, BackgroundTransparency = .08,
+        BorderSizePixel = 0, AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, -3, 1, -3), Size = UDim2.fromOffset(28, 28),
+        ZIndex = 20,
+    }, self.Root)
+    round(self.ResizeGrip, 8)
+    self.ResizeGrip.Visible = true
+
+    local floatingInput, floatingStart, floatingPosition, floatingMoved = nil, nil, nil, false
+    self.ToggleButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            floatingInput, floatingStart, floatingPosition, floatingMoved = input, input.Position, self.ToggleButton.Position, false
+        end
+    end)
+    table.insert(self._connections, UIS.InputChanged:Connect(function(input)
+        if floatingInput and ((floatingInput.UserInputType == Enum.UserInputType.Touch and input == floatingInput)
+            or (floatingInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+            local delta = input.Position - floatingStart
+            if math.abs(delta.X) + math.abs(delta.Y) > 8 then floatingMoved = true end
+            self.ToggleButton.Position = UDim2.new(floatingPosition.X.Scale, floatingPosition.X.Offset + delta.X,
+                floatingPosition.Y.Scale, floatingPosition.Y.Offset + delta.Y)
+        end
+    end))
+    table.insert(self._connections, UIS.InputEnded:Connect(function(input)
+        if floatingInput and (input == floatingInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            if not floatingMoved then
+                self.Root.Visible = not self.Root.Visible
+                -- Keep the logo visible on the floating button in both states.
+                self.ToggleButton.Text = ""
+            end
+            floatingInput = nil
+        end
+    end))
+
+    local resizeInput, resizeStart, resizeSize = nil, nil, nil
+    self.ResizeGrip.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            resizeInput, resizeStart, resizeSize = input, input.Position, self.Root.AbsoluteSize
+        end
+    end)
+    table.insert(self._connections, UIS.InputChanged:Connect(function(input)
+        if resizeInput and ((resizeInput.UserInputType == Enum.UserInputType.Touch and input == resizeInput)
+            or (resizeInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+            local delta = input.Position - resizeStart
+            local cam = workspace.CurrentCamera
+            local maxW, maxH = 950, 720
+            if cam then maxW, maxH = math.min(maxW, cam.ViewportSize.X - 12), math.min(maxH, cam.ViewportSize.Y - 24) end
+            local minW, minH = math.min(300, maxW), math.min(300, maxH)
+            local width = math.clamp(resizeSize.X + delta.X, minW, maxW)
+            local height = math.clamp(resizeSize.Y + delta.Y, minH, maxH)
+            self.Root.Size = UDim2.fromOffset(width, height)
+        end
+    end))
+    table.insert(self._connections, UIS.InputEnded:Connect(function(input)
+        if resizeInput and (input == resizeInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            resizeInput = nil
+        end
+    end))
     self.BG = new("ImageLabel", {
         Name = "Background", BackgroundTransparency = 1, Image = options.BackgroundImage or "",
         ImageTransparency = options.BackgroundTransparency or .88, ScaleType = Enum.ScaleType.Crop,
         Size = UDim2.fromScale(1, 1), ZIndex = 0,
     }, self.Root)
+    SetCover(self.BG, options.BackgroundUrl or DEFAULT_BACKGROUND_URL)
 
     self.Top = new("Frame", {BackgroundColor3 = self.Theme.Panel, BackgroundTransparency = .03,
         BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 54), ZIndex = 2}, self.Root)
@@ -93,6 +235,7 @@ function LunarGui.new(options)
         Position = UDim2.new(0, 0, 1, -12), Size = UDim2.new(1, 0, 0, 12), ZIndex = 2}, self.Top)
     self.Logo = new("ImageLabel", {BackgroundTransparency = 1, Image = options.LogoImage or "",
         Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(34, 34), ScaleType = Enum.ScaleType.Fit, ZIndex = 3}, self.Top)
+    SetCover(self.Logo, options.LogoUrl or DEFAULT_LOGO_URL)
     self.Title = new("TextLabel", {BackgroundTransparency = 1, Text = self.Name, Font = Enum.Font.GothamBold,
         TextSize = 17, TextColor3 = self.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left,
         Position = UDim2.fromOffset(54, 4), Size = UDim2.new(1, -110, 0, 26), ZIndex = 3}, self.Top)
