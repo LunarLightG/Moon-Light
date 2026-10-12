@@ -1,6 +1,3 @@
--- LunarGui Library | Responsive Roblox UI for PC + Mobile
--- Config data is kept in memory by default. For cross-session persistence, pass a trusted Persistence adapter.
--- No executor-only filesystem APIs are used.
 
 local LunarGui = {}
 LunarGui.__index = LunarGui
@@ -11,8 +8,6 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 
--- GitHub image loader for executor environments that support writefile/getcustomasset.
--- URLs are configurable; defaults point to this project's Assets folder.
 local function Http(url)
     local ok, result = pcall(function()
         return game:HttpGet(url, true)
@@ -33,21 +28,39 @@ end
 
 local function SetCover(imageLabel, url)
     task.spawn(function()
-        if not (writefile and getcustomasset) then
-            warn("[LunarGui] Environment does not support writefile/getcustomasset")
+        if not (writefile and getcustomasset and isfile) then
+            warn("[LunarGui] Environment does not support image caching")
             return
         end
+
+        local name
+        if tostring(url):lower():find("background", 1, true) then
+            name = "LunarGui_Background.png"
+        else
+            name = "LunarGui_Logo.png"
+        end
+
+        if isfile(name) then
+            local ok, asset = pcall(function()
+                return getcustomasset(name)
+            end)
+            if ok and asset and imageLabel and imageLabel.Parent then
+                imageLabel.Image = asset
+                return
+            end
+        end
+
         local data = Http(url)
         if not data then
             warn("[LunarGui] Could not load image: " .. tostring(url))
             return
         end
 
-        local name = "lunar_" .. tostring(url):gsub("[^%w]", "_"):sub(-40) .. ".png"
         local ok, asset = pcall(function()
             writefile(name, data)
             return getcustomasset(name)
         end)
+
         if ok and asset and imageLabel and imageLabel.Parent then
             imageLabel.Image = asset
         else
@@ -56,7 +69,7 @@ local function SetCover(imageLabel, url)
     end)
 end
 
-local DEFAULT_LOGO_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/logo.png"
+local DEFAULT_LOGO_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/LunarLogo.png"
 local DEFAULT_BACKGROUND_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/background.png"
 
 LunarGui.Theme = {
@@ -107,9 +120,6 @@ end
 
 function LunarGui.new(options)
     options = options or {}
-    -- Image options must be Roblox asset IDs (rbxassetid://...), not raw GitHub URLs.
-    -- options.LogoImage is used in the header and floating open/close button.
-    -- options.BackgroundImage is used as the window background.
     local self = setmetatable({}, LunarGui)
     self.Name = options.Name or "LunarGui"
     self.Theme = table.clone(LunarGui.Theme)
@@ -132,7 +142,6 @@ function LunarGui.new(options)
     round(self.Root, 16); outline(self.Root, self.Theme.Stroke)
     local rootSizeConstraint = new("UISizeConstraint", {MinSize = Vector2.new(300, 300), MaxSize = Vector2.new(950, 720)}, self.Root)
 
-    -- Floating open/close button: remains visible even when the main window is hidden.
     self.ToggleButton = new("TextButton", {
         Name = "LunarGuiToggle", AutoButtonColor = false, Text = "☾",
         Font = Enum.Font.GothamBold, TextSize = 25, TextColor3 = self.Theme.Text,
@@ -142,8 +151,6 @@ function LunarGui.new(options)
     }, self.Screen)
     round(self.ToggleButton, 26); outline(self.ToggleButton, self.Theme.Accent)
 
-    -- Reuse the uploaded Roblox logo for the floating open/close button.
-    -- options.LogoImage must be an uploaded asset ID, e.g. "rbxassetid://1234567890".
     self.ToggleLogo = new("ImageLabel", {
         Name = "ToggleLogo", BackgroundTransparency = 1,
         Image = options.LogoImage or "", ScaleType = Enum.ScaleType.Fit,
@@ -159,7 +166,6 @@ function LunarGui.new(options)
         Size = UDim2.new(1, 0, 0, 12), ZIndex = 301,
     }, self.ToggleButton)
 
-    -- Bottom-right resize grip, usable with mouse or touch.
     self.ResizeGrip = new("TextButton", {
         Name = "ResizeGrip", AutoButtonColor = false, Text = "◢",
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = self.Theme.Accent,
@@ -190,7 +196,6 @@ function LunarGui.new(options)
         if floatingInput and (input == floatingInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
             if not floatingMoved then
                 self.Root.Visible = not self.Root.Visible
-                -- Keep the logo visible on the floating button in both states.
                 self.ToggleButton.Text = ""
             end
             floatingInput = nil
