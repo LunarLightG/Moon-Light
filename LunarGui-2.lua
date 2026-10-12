@@ -7,7 +7,6 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
-
 local function Http(url)
     local ok, result = pcall(function()
         return game:HttpGet(url, true)
@@ -26,43 +25,59 @@ local function Http(url)
     return nil
 end
 
-local function SetCover(imageLabel, url)
+local CoverAssets = {}
+local CoverLoading = {}
+
+local function SetCover(imageLabel, url, fileName)
     task.spawn(function()
         if not (writefile and getcustomasset and isfile) then
-            warn("[LunarGui] Environment does not support image caching")
+            warn("[LunarGui] Environment does not support image cache APIs")
             return
         end
-
-        local name
-        if tostring(url):lower():find("background", 1, true) then
-            name = "LunarGui_Background.png"
-        else
-            name = "LunarGui_Logo.png"
+        if type(url) ~= "string" or url == "" then
+            warn("[LunarGui] Image URL is empty")
+            return
         end
-
-        if isfile(name) then
-            local ok, asset = pcall(function()
-                return getcustomasset(name)
+        fileName = fileName or ("lunar_" .. url:gsub("[^%w]", "_"):sub(-40) .. ".img")
+        if isfile(fileName) then
+            local cachedOk, cachedAsset = pcall(function()
+                return getcustomasset(fileName)
             end)
-            if ok and asset and imageLabel and imageLabel.Parent then
-                imageLabel.Image = asset
+            if cachedOk and cachedAsset then
+                CoverAssets[fileName] = cachedAsset
+                CoverLoading[fileName] = nil
+                if imageLabel and imageLabel.Parent then
+                    imageLabel.Image = cachedAsset
+                end
                 return
             end
         end
 
         local data = Http(url)
         if not data then
+            CoverLoading[fileName] = nil
             warn("[LunarGui] Could not load image: " .. tostring(url))
             return
         end
 
-        local ok, asset = pcall(function()
-            writefile(name, data)
-            return getcustomasset(name)
+        local writeOk, writeErr = pcall(function()
+            writefile(fileName, data)
         end)
+        if not writeOk then
+            CoverLoading[fileName] = nil
+            warn("[LunarGui] Could not save image: " .. tostring(writeErr))
+            return
+        end
 
-        if ok and asset and imageLabel and imageLabel.Parent then
-            imageLabel.Image = asset
+        local assetOk, asset = pcall(function()
+            return getcustomasset(fileName)
+        end)
+        CoverLoading[fileName] = nil
+        if assetOk and asset then
+            CoverAssets[fileName] = asset
+            if imageLabel and imageLabel.Parent then
+                imageLabel.Image = asset
+            end
         else
             warn("[LunarGui] Could not convert image: " .. tostring(asset))
         end
@@ -141,7 +156,6 @@ function LunarGui.new(options)
     }, self.Screen)
     round(self.Root, 16); outline(self.Root, self.Theme.Stroke)
     local rootSizeConstraint = new("UISizeConstraint", {MinSize = Vector2.new(300, 300), MaxSize = Vector2.new(950, 720)}, self.Root)
-
     self.ToggleButton = new("TextButton", {
         Name = "LunarGuiToggle", AutoButtonColor = false, Text = "☾",
         Font = Enum.Font.GothamBold, TextSize = 25, TextColor3 = self.Theme.Text,
@@ -150,14 +164,13 @@ function LunarGui.new(options)
         Size = UDim2.fromOffset(52, 52), ZIndex = 300,
     }, self.Screen)
     round(self.ToggleButton, 26); outline(self.ToggleButton, self.Theme.Accent)
-
     self.ToggleLogo = new("ImageLabel", {
         Name = "ToggleLogo", BackgroundTransparency = 1,
         Image = options.LogoImage or "", ScaleType = Enum.ScaleType.Fit,
         AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5),
         Size = UDim2.new(1, -10, 1, -10), ZIndex = 301,
     }, self.ToggleButton)
-    SetCover(self.ToggleLogo, options.LogoUrl or DEFAULT_LOGO_URL)
+    SetCover(self.ToggleLogo, options.LogoUrl or DEFAULT_LOGO_URL, "LunarHub_Logo.png")
     self.ToggleButton.Text = ""
     self.ToggleButtonHint = new("TextLabel", {
         Name = "ToggleHint", BackgroundTransparency = 1, Text = "LUNAR",
@@ -165,7 +178,6 @@ function LunarGui.new(options)
         AnchorPoint = Vector2.new(.5, 0), Position = UDim2.new(.5, 0, 1, 1),
         Size = UDim2.new(1, 0, 0, 12), ZIndex = 301,
     }, self.ToggleButton)
-
     self.ResizeGrip = new("TextButton", {
         Name = "ResizeGrip", AutoButtonColor = false, Text = "◢",
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = self.Theme.Accent,
@@ -231,7 +243,7 @@ function LunarGui.new(options)
         ImageTransparency = options.BackgroundTransparency or .88, ScaleType = Enum.ScaleType.Crop,
         Size = UDim2.fromScale(1, 1), ZIndex = 0,
     }, self.Root)
-    SetCover(self.BG, options.BackgroundUrl or DEFAULT_BACKGROUND_URL)
+    SetCover(self.BG, options.BackgroundUrl or DEFAULT_BACKGROUND_URL, "LunarHub_Background.png")
 
     self.Top = new("Frame", {BackgroundColor3 = self.Theme.Panel, BackgroundTransparency = .03,
         BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 54), ZIndex = 2}, self.Root)
@@ -240,7 +252,7 @@ function LunarGui.new(options)
         Position = UDim2.new(0, 0, 1, -12), Size = UDim2.new(1, 0, 0, 12), ZIndex = 2}, self.Top)
     self.Logo = new("ImageLabel", {BackgroundTransparency = 1, Image = options.LogoImage or "",
         Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(34, 34), ScaleType = Enum.ScaleType.Fit, ZIndex = 3}, self.Top)
-    SetCover(self.Logo, options.LogoUrl or DEFAULT_LOGO_URL)
+    SetCover(self.Logo, options.LogoUrl or DEFAULT_LOGO_URL, "LunarHub_Logo.png")
     self.Title = new("TextLabel", {BackgroundTransparency = 1, Text = self.Name, Font = Enum.Font.GothamBold,
         TextSize = 17, TextColor3 = self.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left,
         Position = UDim2.fromOffset(54, 4), Size = UDim2.new(1, -110, 0, 26), ZIndex = 3}, self.Top)
