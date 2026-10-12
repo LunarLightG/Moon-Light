@@ -161,23 +161,18 @@ function LunarGui.new(options)
         Font = Enum.Font.GothamBold, TextSize = 25, TextColor3 = self.Theme.Text,
         BackgroundColor3 = self.Theme.AccentDark, BorderSizePixel = 0,
         AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -22, 1, -120),
-        Size = UDim2.fromOffset(52, 52), ZIndex = 300,
+        Size = UDim2.fromOffset(68, 68), ZIndex = 300,
     }, self.Screen)
-    round(self.ToggleButton, 26); outline(self.ToggleButton, self.Theme.Accent)
+    round(self.ToggleButton, 12); outline(self.ToggleButton, self.Theme.Accent)
     self.ToggleLogo = new("ImageLabel", {
         Name = "ToggleLogo", BackgroundTransparency = 1,
         Image = options.LogoImage or "", ScaleType = Enum.ScaleType.Fit,
         AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5),
-        Size = UDim2.new(1, -10, 1, -10), ZIndex = 301,
+        Size = UDim2.fromScale(1, 1), ZIndex = 301,
     }, self.ToggleButton)
     SetCover(self.ToggleLogo, options.LogoUrl or DEFAULT_LOGO_URL, "LunarHub_Logo.png")
+    round(self.ToggleLogo, 10)
     self.ToggleButton.Text = ""
-    self.ToggleButtonHint = new("TextLabel", {
-        Name = "ToggleHint", BackgroundTransparency = 1, Text = "LUNAR",
-        Font = Enum.Font.GothamBold, TextSize = 8, TextColor3 = self.Theme.Text,
-        AnchorPoint = Vector2.new(.5, 0), Position = UDim2.new(.5, 0, 1, 1),
-        Size = UDim2.new(1, 0, 0, 12), ZIndex = 301,
-    }, self.ToggleButton)
     self.ResizeGrip = new("TextButton", {
         Name = "ResizeGrip", AutoButtonColor = false, Text = "◢",
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = self.Theme.Accent,
