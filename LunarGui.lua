@@ -88,12 +88,13 @@ local DEFAULT_LOGO_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Lig
 local DEFAULT_BACKGROUND_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/background.png"
 
 LunarGui.Theme = {
-    Background = Color3.fromRGB(14, 11, 21),
-    Panel = Color3.fromRGB(25, 20, 36),
-    Row = Color3.fromRGB(35, 27, 49),
-    Stroke = Color3.fromRGB(76, 56, 104),
-    Accent = Color3.fromRGB(163, 104, 255),
-    AccentDark = Color3.fromRGB(99, 60, 160),
+    Background = Color3.fromRGB(11, 9, 18),
+    Panel = Color3.fromRGB(20, 16, 31),
+    Row = Color3.fromRGB(30, 24, 44),
+    Stroke = Color3.fromRGB(62, 47, 92),
+    Accent = Color3.fromRGB(170, 110, 255),
+    Accent2 = Color3.fromRGB(236, 120, 255),
+    AccentDark = Color3.fromRGB(108, 62, 184),
     Text = Color3.fromRGB(245, 239, 255),
     Muted = Color3.fromRGB(169, 155, 190),
     Green = Color3.fromRGB(83, 220, 142),
@@ -108,7 +109,19 @@ local function new(class, props, parent)
 end
 local function round(o, r) new("UICorner", {CornerRadius = UDim.new(0, r or 10)}, o) end
 local function outline(o, color)
-    new("UIStroke", {Color = color or LunarGui.Theme.Stroke, Transparency = 0.15, Thickness = 1}, o)
+    return new("UIStroke", {Color = color or LunarGui.Theme.Stroke, Transparency = 0.15, Thickness = 1}, o)
+end
+local function gradient(o, c1, c2, rot)
+    return new("UIGradient", {Color = ColorSequence.new(c1, c2), Rotation = rot or 0}, o)
+end
+local function rowStyle(row, theme)
+    local s = new("UIStroke", {Color = theme.Stroke, Transparency = .55, Thickness = 1}, row)
+    row.MouseEnter:Connect(function()
+        TweenService:Create(s, TweenInfo.new(.18), {Color = theme.Accent, Transparency = .25}):Play()
+    end)
+    row.MouseLeave:Connect(function()
+        TweenService:Create(s, TweenInfo.new(.18), {Color = theme.Stroke, Transparency = .55}):Play()
+    end)
 end
 local function tween(o, props, t)
     TweenService:Create(o, TweenInfo.new(t or 0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props):Play()
@@ -127,9 +140,18 @@ local function button(parent, text, theme, height)
         TextColor3 = theme.Text, BackgroundColor3 = theme.Row, BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, height or 36),
     }, parent)
-    round(b, 9); outline(b)
-    b.MouseEnter:Connect(function() tween(b, {BackgroundColor3 = theme.AccentDark}) end)
-    b.MouseLeave:Connect(function() tween(b, {BackgroundColor3 = theme.Row}) end)
+    round(b, 10)
+    local st = outline(b); st.Transparency = .45
+    gradient(b, Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 195, 225), 90)
+    local sc = new("UIScale", {Scale = 1}, b)
+    b.MouseEnter:Connect(function()
+        tween(b, {BackgroundColor3 = theme.AccentDark}); tween(st, {Color = theme.Accent, Transparency = .1})
+    end)
+    b.MouseLeave:Connect(function()
+        tween(b, {BackgroundColor3 = theme.Row}); tween(st, {Color = theme.Stroke, Transparency = .45}); tween(sc, {Scale = 1}, .12)
+    end)
+    b.MouseButton1Down:Connect(function() tween(sc, {Scale = .97}, .08) end)
+    b.MouseButton1Up:Connect(function() tween(sc, {Scale = 1}, .12) end)
     return b
 end
 
@@ -154,7 +176,13 @@ function LunarGui.new(options)
         Size = UDim2.new(.82, 0, .78, 0), BackgroundColor3 = self.Theme.Background,
         BorderSizePixel = 0, ClipsDescendants = true,
     }, self.Screen)
-    round(self.Root, 16); outline(self.Root, self.Theme.Stroke)
+    round(self.Root, 18)
+    local rootStroke = outline(self.Root, self.Theme.Accent)
+    rootStroke.Transparency = .35; rootStroke.Thickness = 1.5
+    gradient(rootStroke, self.Theme.Accent, self.Theme.Accent2, 45)
+    gradient(self.Root, Color3.fromRGB(255, 255, 255), Color3.fromRGB(190, 175, 215), 120)
+    local introScale = new("UIScale", {Scale = .93}, self.Root)
+    tween(introScale, {Scale = 1}, .4)
     local rootSizeConstraint = new("UISizeConstraint", {MinSize = Vector2.new(300, 300), MaxSize = Vector2.new(950, 720)}, self.Root)
     self.ToggleButton = new("TextButton", {
         Name = "LunarGuiToggle", AutoButtonColor = false, Text = "☾",
@@ -163,7 +191,10 @@ function LunarGui.new(options)
         AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -22, 1, -120),
         Size = UDim2.fromOffset(68, 68), ZIndex = 300,
     }, self.Screen)
-    round(self.ToggleButton, 12); outline(self.ToggleButton, self.Theme.Accent)
+    round(self.ToggleButton, 20)
+    local tbStroke = outline(self.ToggleButton, self.Theme.Accent); tbStroke.Thickness = 2; tbStroke.Transparency = .1
+    gradient(tbStroke, self.Theme.Accent, self.Theme.Accent2, 45)
+    gradient(self.ToggleButton, Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 150, 210), 90)
     self.ToggleLogo = new("ImageLabel", {
         Name = "ToggleLogo", BackgroundTransparency = 1,
         Image = options.LogoImage or "", ScaleType = Enum.ScaleType.Fit,
@@ -171,7 +202,7 @@ function LunarGui.new(options)
         Size = UDim2.fromScale(1, 1), ZIndex = 301,
     }, self.ToggleButton)
     SetCover(self.ToggleLogo, options.LogoUrl or DEFAULT_LOGO_URL, "LunarHub_Logo.png")
-    round(self.ToggleLogo, 10)
+    round(self.ToggleLogo, 16)
     self.ToggleButton.Text = ""
     self.ResizeGrip = new("TextButton", {
         Name = "ResizeGrip", AutoButtonColor = false, Text = "◢",
@@ -181,7 +212,7 @@ function LunarGui.new(options)
         Position = UDim2.new(1, -3, 1, -3), Size = UDim2.fromOffset(28, 28),
         ZIndex = 20,
     }, self.Root)
-    round(self.ResizeGrip, 8)
+    round(self.ResizeGrip, 8); outline(self.ResizeGrip).Transparency = .5
     self.ResizeGrip.Visible = true
 
     local floatingInput, floatingStart, floatingPosition, floatingMoved = nil, nil, nil, false
@@ -242,27 +273,41 @@ function LunarGui.new(options)
 
     self.Top = new("Frame", {BackgroundColor3 = self.Theme.Panel, BackgroundTransparency = .03,
         BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 54), ZIndex = 2}, self.Root)
-    round(self.Top, 16)
+    round(self.Top, 18)
     new("Frame", {BackgroundColor3 = self.Theme.Panel, BorderSizePixel = 0,
         Position = UDim2.new(0, 0, 1, -12), Size = UDim2.new(1, 0, 0, 12), ZIndex = 2}, self.Top)
+    local topLine = new("Frame", {BackgroundColor3 = self.Theme.Accent, BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 1, -2), Size = UDim2.new(1, 0, 0, 2), ZIndex = 5}, self.Top)
+    new("UIGradient", {Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, self.Theme.AccentDark),
+        ColorSequenceKeypoint.new(.5, self.Theme.Accent2),
+        ColorSequenceKeypoint.new(1, self.Theme.AccentDark)}),
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(.2, .2),
+            NumberSequenceKeypoint.new(.8, .2), NumberSequenceKeypoint.new(1, 1)})}, topLine)
     self.Logo = new("ImageLabel", {BackgroundTransparency = 1, Image = options.LogoImage or "",
         Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(34, 34), ScaleType = Enum.ScaleType.Fit, ZIndex = 3}, self.Top)
     SetCover(self.Logo, options.LogoUrl or DEFAULT_LOGO_URL, "LunarHub_Logo.png")
     self.Title = new("TextLabel", {BackgroundTransparency = 1, Text = self.Name, Font = Enum.Font.GothamBold,
-        TextSize = 17, TextColor3 = self.Theme.Text, TextXAlignment = Enum.TextXAlignment.Left,
+        TextSize = 18, TextColor3 = Color3.new(1, 1, 1), TextXAlignment = Enum.TextXAlignment.Left,
         Position = UDim2.fromOffset(54, 4), Size = UDim2.new(1, -110, 0, 26), ZIndex = 3}, self.Top)
+    gradient(self.Title, Color3.fromRGB(255, 255, 255), self.Theme.Accent2, 0)
     self.Subtitle = new("TextLabel", {BackgroundTransparency = 1, Text = options.Subtitle or "GALAXY INTERFACE",
-        Font = Enum.Font.Gotham, TextSize = 9, TextColor3 = self.Theme.Muted,
-        TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(55, 29),
+        Font = Enum.Font.GothamMedium, TextSize = 9, TextColor3 = self.Theme.Muted,
+        TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(55, 30),
         Size = UDim2.new(1, -110, 0, 14), ZIndex = 3}, self.Top)
     self.Min = new("TextButton", {AutoButtonColor = false, Text = "—", Font = Enum.Font.GothamBold,
         TextSize = 18, TextColor3 = self.Theme.Text, BackgroundColor3 = self.Theme.Row,
         AnchorPoint = Vector2.new(1, .5), Position = UDim2.new(1, -12, .5, 0),
         Size = UDim2.fromOffset(30, 30), ZIndex = 4}, self.Top)
-    round(self.Min, 8)
+    round(self.Min, 10); outline(self.Min).Transparency = .5
+    self.Min.MouseEnter:Connect(function() tween(self.Min, {BackgroundColor3 = self.Theme.AccentDark}) end)
+    self.Min.MouseLeave:Connect(function() tween(self.Min, {BackgroundColor3 = self.Theme.Row}) end)
 
     self.Side = new("Frame", {BackgroundColor3 = self.Theme.Panel, BackgroundTransparency = .12,
         BorderSizePixel = 0, Position = UDim2.fromOffset(0, 54), Size = UDim2.new(0, 150, 1, -54), ZIndex = 1}, self.Root)
+    new("Frame", {BackgroundColor3 = self.Theme.Stroke, BackgroundTransparency = .35, BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 1, 1, 0), ZIndex = 2}, self.Side)
     self.TabList = new("ScrollingFrame", {BackgroundTransparency = 1, BorderSizePixel = 0,
         Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -16, 1, -88),
         AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), ScrollBarThickness = 3,
@@ -271,7 +316,7 @@ function LunarGui.new(options)
     self.Profile = new("Frame", {BackgroundColor3 = self.Theme.Row, BackgroundTransparency = .15,
         BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 8, 1, -8),
         Size = UDim2.new(1, -16, 0, 62)}, self.Side)
-    round(self.Profile, 11)
+    round(self.Profile, 12); outline(self.Profile).Transparency = .5
     self.Avatar = new("ImageLabel", {BackgroundColor3 = self.Theme.Panel, BorderSizePixel = 0,
         Position = UDim2.fromOffset(8, 9), Size = UDim2.fromOffset(42, 42), Image = ""}, self.Profile)
     round(self.Avatar, 21); outline(self.Avatar, self.Theme.Accent)
@@ -375,8 +420,17 @@ function LunarGui:CreateTab(options)
         Font = Enum.Font.GothamSemibold, TextSize = 12, TextColor3 = self.Theme.Muted,
         TextXAlignment = Enum.TextXAlignment.Left, BackgroundColor3 = self.Theme.Row,
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 38), LayoutOrder = #self.Tabs + 1}, self.TabList)
-    round(tab.Button, 9)
-    new("UIPadding", {PaddingLeft = UDim.new(0, 10)}, tab.Button)
+    round(tab.Button, 10)
+    new("UIPadding", {PaddingLeft = UDim.new(0, 16)}, tab.Button)
+    tab.Indicator = new("Frame", {BackgroundColor3 = self.Theme.Accent2, BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(0, .5), Position = UDim2.new(0, -10, .5, 0), Size = UDim2.fromOffset(3, 0), ZIndex = 3}, tab.Button)
+    round(tab.Indicator, 2)
+    tab.Button.MouseEnter:Connect(function()
+        if self.ActiveTab ~= tab then tab.Button.BackgroundColor3 = self.Theme.Row; tween(tab.Button, {BackgroundTransparency = .5, TextColor3 = self.Theme.Text}) end
+    end)
+    tab.Button.MouseLeave:Connect(function()
+        if self.ActiveTab ~= tab then tween(tab.Button, {BackgroundTransparency = 1, TextColor3 = self.Theme.Muted}) end
+    end)
     tab.Page = new("ScrollingFrame", {BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromScale(1, 1),
         CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3,
         ScrollBarImageColor3 = self.Theme.Accent, Visible = false}, self.Content)
@@ -389,11 +443,16 @@ function LunarGui:CreateTab(options)
         local section = {Gui = gui, Tab = self, Name = opts.Name or "Section", Open = opts.DefaultOpen ~= false, Components = {}}
         section.Frame = new("Frame", {BackgroundColor3 = gui.Theme.Panel, BackgroundTransparency = .06,
             BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 42), AutomaticSize = Enum.AutomaticSize.Y}, self.Page)
-        round(section.Frame, 12); outline(section.Frame)
+        round(section.Frame, 14); outline(section.Frame).Transparency = .3
+        gradient(section.Frame, Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 195, 225), 90)
         section.Header = new("TextButton", {AutoButtonColor = false, Text = "", BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 42)}, section.Frame)
         local title = label(section.Header, section.Name, 13, gui.Theme.Text, true)
-        title.Position, title.Size = UDim2.fromOffset(13, 0), UDim2.new(1, -48, 1, 0)
+        title.Position, title.Size = UDim2.fromOffset(24, 0), UDim2.new(1, -56, 1, 0)
+        title.TextSize = 13
+        local secBar = new("Frame", {BackgroundColor3 = gui.Theme.Accent, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(12, 13), Size = UDim2.fromOffset(3, 16)}, section.Header)
+        round(secBar, 2); gradient(secBar, gui.Theme.Accent2, gui.Theme.Accent, 90)
         section.Chevron = label(section.Header, section.Open and "⌄" or "›", 18, gui.Theme.Accent, true)
         section.Chevron.TextXAlignment = Enum.TextXAlignment.Center
         section.Chevron.Position, section.Chevron.Size = UDim2.new(1, -32, 0, 8), UDim2.fromOffset(20, 24)
@@ -425,14 +484,14 @@ function LunarGui:CreateTab(options)
         end
         function section:CreateToggle(opts)
             opts = opts or {}; local id = opts.Flag or opts.Name or ("Toggle" .. (#self.Components + 1))
-            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 42)}, self.Body); round(row, 9)
+            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 42)}, self.Body); round(row, 10); rowStyle(row, gui.Theme)
             local l = label(row, opts.Name or id, 12, gui.Theme.Text, true); l.Position = UDim2.fromOffset(10, 0); l.Size = UDim2.new(1, -65, 1, 0)
-            local track = new("TextButton", {AutoButtonColor = false, Text = "", BackgroundColor3 = gui.Theme.Stroke, Position = UDim2.new(1, -52, .5, -11), Size = UDim2.fromOffset(42, 22)}, row); round(track, 12)
-            local knob = new("Frame", {BackgroundColor3 = gui.Theme.Text, BorderSizePixel = 0, Position = UDim2.fromOffset(4, 3), Size = UDim2.fromOffset(16, 16)}, track); round(knob, 9)
+            local track = new("TextButton", {AutoButtonColor = false, Text = "", BackgroundColor3 = gui.Theme.Stroke, Position = UDim2.new(1, -56, .5, -12), Size = UDim2.fromOffset(46, 24)}, row); round(track, 12)
+            local knob = new("Frame", {BackgroundColor3 = gui.Theme.Text, BorderSizePixel = 0, Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(18, 18)}, track); round(knob, 9)
             local value = opts.Default == true
             local function set(v, silent)
                 value = v == true; tween(track, {BackgroundColor3 = value and gui.Theme.Accent or gui.Theme.Stroke})
-                tween(knob, {Position = value and UDim2.new(1, -20, 0, 3) or UDim2.fromOffset(4, 3)})
+                tween(knob, {Position = value and UDim2.new(1, -21, 0, 3) or UDim2.fromOffset(3, 3)})
                 gui.Values[id] = value
                 if not silent and opts.Callback then task.spawn(opts.Callback, value) end
             end
@@ -445,12 +504,16 @@ function LunarGui:CreateTab(options)
             local min, max = tonumber(opts.Min) or 0, tonumber(opts.Max) or 100
             if max < min then min, max = max, min end
             local dec = math.max(0, math.floor(tonumber(opts.Decimals) or 0)); local factor = 10 ^ dec
-            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 72)}, self.Body); round(row, 9)
+            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 72)}, self.Body); round(row, 10); rowStyle(row, gui.Theme)
             local l = label(row, opts.Name or id, 12, gui.Theme.Text, true); l.Position = UDim2.fromOffset(10, 3); l.Size = UDim2.new(1, -98, 0, 23)
             local box = new("TextBox", {ClearTextOnFocus = false, Text = tostring(opts.Default or min), Font = Enum.Font.GothamSemibold, TextSize = 12,
-                TextColor3 = gui.Theme.Text, BackgroundColor3 = gui.Theme.Background, BorderSizePixel = 0, Position = UDim2.new(1, -80, 0, 4), Size = UDim2.fromOffset(70, 25)}, row); round(box, 7)
-            local bar = new("Frame", {BackgroundColor3 = gui.Theme.Stroke, BorderSizePixel = 0, Position = UDim2.new(0, 10, 0, 47), Size = UDim2.new(1, -20, 0, 7)}, row); round(bar, 4)
+                TextColor3 = gui.Theme.Text, BackgroundColor3 = gui.Theme.Background, BorderSizePixel = 0, Position = UDim2.new(1, -80, 0, 4), Size = UDim2.fromOffset(70, 25)}, row); round(box, 7); outline(box).Transparency = .5
+            local bar = new("Frame", {BackgroundColor3 = gui.Theme.Stroke, BorderSizePixel = 0, Position = UDim2.new(0, 10, 0, 47), Size = UDim2.new(1, -20, 0, 8)}, row); round(bar, 4)
             local fill = new("Frame", {BackgroundColor3 = gui.Theme.Accent, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0)}, bar); round(fill, 4)
+            gradient(fill, gui.Theme.AccentDark, gui.Theme.Accent2, 0)
+            local knobS = new("Frame", {BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
+                Position = UDim2.new(1, 0, .5, 0), Size = UDim2.fromOffset(15, 15), ZIndex = 3}, fill)
+            round(knobS, 8); outline(knobS, gui.Theme.Accent).Thickness = 2
             local hit = new("TextButton", {Text = "", BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, -9), Size = UDim2.new(1, 0, 0, 25)}, bar)
             local value = min
             local function set(v, silent)
@@ -461,18 +524,26 @@ function LunarGui:CreateTab(options)
                 return true
             end
             local function fromX(x) local a = math.clamp((x - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X), 0, 1); set(min + (max - min) * a) end
-            hit.Activated:Connect(function() fromX(UIS:GetMouseLocation().X) end)
-            hit.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch then fromX(i.Position.X) end end)
+            local sliding = false
+            hit.InputBegan:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then sliding = true; fromX(i.Position.X) end
+            end)
+            table.insert(gui._connections, UIS.InputChanged:Connect(function(i)
+                if sliding and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then fromX(i.Position.X) end
+            end))
+            table.insert(gui._connections, UIS.InputEnded:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then sliding = false end
+            end))
             box.FocusLost:Connect(function() if not set(box.Text) then box.Text = tostring(value) end end)
             set(opts.Default or min, true); self:_register(id, function(v) set(v, true) end, function() return value end, "Slider")
             return {Set = set, Get = function() return value end, Instance = row}
         end
         function section:CreateDropdown(opts)
             opts = opts or {}; local id = opts.Flag or opts.Name or ("Dropdown" .. (#self.Components + 1))
-            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 44)}, self.Body); round(row, 9)
+            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 44)}, self.Body); round(row, 10); rowStyle(row, gui.Theme)
             local l = label(row, opts.Name or id, 12, gui.Theme.Text, true); l.Position = UDim2.fromOffset(10, 0); l.Size = UDim2.new(.42, -10, 1, 0)
             local value = opts.Default
-            local chosen = label(row, value or "Select...", 11, gui.Theme.Muted, false); chosen.TextXAlignment = Enum.TextXAlignment.Right; chosen.Position = UDim2.new(.42, 0, 0, 0); chosen.Size = UDim2.new(.58, -38, 1, 0)
+            local chosen = label(row, value or "Select...", 11, gui.Theme.Accent, true); chosen.TextXAlignment = Enum.TextXAlignment.Right; chosen.Position = UDim2.new(.42, 0, 0, 0); chosen.Size = UDim2.new(.58, -38, 1, 0)
             local open = new("TextButton", {Text = "⌄", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = gui.Theme.Accent, BackgroundTransparency = 1, Position = UDim2.new(1, -34, 0, 4), Size = UDim2.fromOffset(30, 34)}, row)
             local function picker()
                 if gui.Picker then gui.Picker:Destroy() end
@@ -499,16 +570,16 @@ function LunarGui:CreateTab(options)
         end
         function section:CreateTextbox(opts)
             opts = opts or {}; local id = opts.Flag or opts.Name or ("Textbox" .. (#self.Components + 1))
-            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 66)}, self.Body); round(row, 9)
+            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 66)}, self.Body); round(row, 10); rowStyle(row, gui.Theme)
             local l = label(row, opts.Name or id, 12, gui.Theme.Text, true); l.Position = UDim2.fromOffset(10, 0)
-            local box = new("TextBox", {ClearTextOnFocus = false, Text = tostring(opts.Default or ""), PlaceholderText = opts.Placeholder or "Type here", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = gui.Theme.Text, PlaceholderColor3 = gui.Theme.Muted, TextXAlignment = Enum.TextXAlignment.Left, BackgroundColor3 = gui.Theme.Background, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 29), Size = UDim2.new(1, -16, 0, 29)}, row); round(box, 7)
+            local box = new("TextBox", {ClearTextOnFocus = false, Text = tostring(opts.Default or ""), PlaceholderText = opts.Placeholder or "Type here", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = gui.Theme.Text, PlaceholderColor3 = gui.Theme.Muted, TextXAlignment = Enum.TextXAlignment.Left, BackgroundColor3 = gui.Theme.Background, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 29), Size = UDim2.new(1, -16, 0, 29)}, row); round(box, 8); outline(box).Transparency = .5
             local val = box.Text; box.FocusLost:Connect(function(enter) val = box.Text; gui.Values[id] = val; if opts.Callback then task.spawn(opts.Callback, val, enter) end end)
             self:_register(id, function(v) val = tostring(v or ""); box.Text = val end, function() return val end, "Textbox")
             return {Get = function() return val end, Set = function(v) val = tostring(v or ""); box.Text = val; gui.Values[id] = val end, Instance = row}
         end
         function section:CreateKeybind(opts)
             opts = opts or {}; local id = opts.Flag or opts.Name or ("Keybind" .. (#self.Components + 1))
-            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 42)}, self.Body); round(row, 9)
+            local row = new("Frame", {BackgroundColor3 = gui.Theme.Row, BackgroundTransparency = .12, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 42)}, self.Body); round(row, 10); rowStyle(row, gui.Theme)
             local l = label(row, opts.Name or id, 12, gui.Theme.Text, true); l.Position = UDim2.fromOffset(10, 0); l.Size = UDim2.new(1, -100, 1, 0)
             local key = opts.Default or Enum.KeyCode.RightShift; local listening = false
             local b = button(row, key.Name, gui.Theme, 28); b.AnchorPoint = Vector2.new(1, .5); b.Position = UDim2.new(1, -8, .5, 0); b.Size = UDim2.fromOffset(82, 28)
@@ -535,9 +606,9 @@ function LunarGui:SelectTab(tab)
     self.ActiveTab = tab
     for _, t in ipairs(self.Tabs) do
         local active = t == tab; t.Page.Visible = active
-        t.Button.BackgroundTransparency = active and 0 or 1
         t.Button.BackgroundColor3 = active and self.Theme.AccentDark or self.Theme.Row
-        t.Button.TextColor3 = active and self.Theme.Text or self.Theme.Muted
+        tween(t.Button, {BackgroundTransparency = active and .25 or 1, TextColor3 = active and self.Theme.Text or self.Theme.Muted})
+        tween(t.Indicator, {Size = UDim2.fromOffset(3, active and 20 or 0)}, .22)
     end
 end
 
@@ -545,12 +616,21 @@ function LunarGui:Notify(options)
     options = type(options) == "string" and {Description = options} or (options or {})
     local toast = new("Frame", {AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, 90),
         Size = UDim2.new(0, 270, 0, 76), BackgroundColor3 = self.Theme.Panel, BorderSizePixel = 0, ZIndex = 200}, self.Screen)
-    round(toast, 12); outline(toast, self.Theme.Accent)
-    local title = label(toast, options.Title or "LunarGui", 13, self.Theme.Text, true); title.Position = UDim2.fromOffset(12, 7); title.Size = UDim2.new(1, -24, 0, 22); title.ZIndex = 201
+    round(toast, 14); outline(toast, self.Theme.Accent).Transparency = .3
+    gradient(toast, Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 195, 225), 90)
+    local accentBar = new("Frame", {BackgroundColor3 = self.Theme.Accent, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(8, 12), Size = UDim2.new(0, 3, 1, -24), ZIndex = 202}, toast)
+    round(accentBar, 2); gradient(accentBar, self.Theme.Accent2, self.Theme.Accent, 90)
+    local title = label(toast, options.Title or "LunarGui", 13, self.Theme.Text, true); title.Position = UDim2.fromOffset(22, 7); title.Size = UDim2.new(1, -34, 0, 22); title.ZIndex = 201
     local desc = new("TextLabel", {BackgroundTransparency = 1, Text = options.Description or options.Content or "", Font = Enum.Font.Gotham,
         TextSize = 11, TextColor3 = self.Theme.Muted, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Top, Position = UDim2.fromOffset(12, 31), Size = UDim2.new(1, -24, 0, 36), ZIndex = 201}, toast)
-    tween(toast, {Position = UDim2.new(1, -14, 1, -14)})
+        TextYAlignment = Enum.TextYAlignment.Top, Position = UDim2.fromOffset(22, 31), Size = UDim2.new(1, -34, 0, 34), ZIndex = 201}, toast)
+    local life = options.Duration or 3
+    local progress = new("Frame", {BackgroundColor3 = self.Theme.Accent2, BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 14, 1, -5), Size = UDim2.new(1, -28, 0, 2), ZIndex = 202}, toast)
+    round(progress, 1)
+    TweenService:Create(progress, TweenInfo.new(life, Enum.EasingStyle.Linear), {Size = UDim2.new(0, 0, 0, 2)}):Play()
+    tween(toast, {Position = UDim2.new(1, -14, 1, -14)}, .35)
     task.delay(options.Duration or 3, function() if toast.Parent then tween(toast, {Position = UDim2.new(1, -14, 1, 90), BackgroundTransparency = 1}); task.delay(.25, function() if toast.Parent then toast:Destroy() end end) end end)
     return toast
 end
