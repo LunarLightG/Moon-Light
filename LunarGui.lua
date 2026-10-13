@@ -159,28 +159,51 @@ local function makeIcon(parent, icon, px, color)
         Position = UDim2.fromScale(.5, .5), Size = UDim2.fromOffset(px + 10, px + 10)})
 end
 
--- Drawn crescent-moon logo (or a custom image if LogoUrl / LogoImage is given)
+-- Premium moon logo: dark squircle, rotating neon border, glowing moon with craters + sparkle.
+-- Custom image: options.LogoUrl / options.LogoImage.   Old crescent look: options.LogoStyle = "crescent"
 local function makeLogo(parent, px, options, T)
-    local tileColor = Color3.fromRGB(22, 17, 38)
-    local tile = new("Frame", {BackgroundColor3 = tileColor, BorderSizePixel = 0, Size = UDim2.fromOffset(px, px)}, parent)
-    round(tile, math.floor(px * .3))
-    gradient(stroke(tile, WHITE, .2, 1.5), T.Accent, T.Accent2, 45)
+    local tile = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, Size = UDim2.fromOffset(px, px)}, parent)
+    round(tile, math.floor(px * .32))
+    gradient(tile, Color3.fromRGB(34, 21, 56), Color3.fromRGB(11, 8, 21), 90)
+    local ug = new("UIGradient", {Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, T.Accent), ColorSequenceKeypoint.new(.5, T.Accent2), ColorSequenceKeypoint.new(1, T.Accent)})},
+        stroke(tile, WHITE, 0, math.max(1.5, px / 26)))
+
     if (options.LogoImage and options.LogoImage ~= "") or (options.LogoUrl and options.LogoUrl ~= "") then
         local img = new("ImageLabel", {BackgroundTransparency = 1, Image = options.LogoImage or "", ScaleType = Enum.ScaleType.Fit,
             AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5), Size = UDim2.fromScale(.78, .78)}, tile)
         if options.LogoUrl then SetCover(img, options.LogoUrl, "LunarHub_Logo.png") end
-        return tile
+        return tile, ug
     end
+
+    if options.LogoStyle == "crescent" then
+        local tileColor = Color3.fromRGB(20, 14, 34)
+        tile.BackgroundColor3 = tileColor
+        for _, ch in ipairs(tile:GetChildren()) do if ch:IsA("UIGradient") then ch:Destroy() end end
+        local moon = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
+            Position = UDim2.fromScale(.47, .53), Size = UDim2.fromScale(.56, .56)}, tile)
+        round(moon, 999); gradient(moon, WHITE, T.Accent2, 45)
+        local cut = new("Frame", {BackgroundColor3 = tileColor, BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
+            Position = UDim2.fromScale(.61, .42), Size = UDim2.fromScale(.5, .5)}, tile)
+        round(cut, 999)
+        return tile, ug
+    end
+
+    local d = px * .5
     local moon = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
-        Position = UDim2.fromScale(.47, .53), Size = UDim2.fromScale(.56, .56)}, tile)
-    round(moon, 999); gradient(moon, WHITE, T.Accent2, 45)
-    local cut = new("Frame", {BackgroundColor3 = tileColor, BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
-        Position = UDim2.fromScale(.61, .42), Size = UDim2.fromScale(.5, .5)}, tile)
-    round(cut, 999)
-    local star = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
-        Position = UDim2.fromScale(.74, .29), Size = UDim2.fromScale(.13, .13), Rotation = 45}, tile)
-    round(star, 1)
-    return tile
+        Position = UDim2.fromScale(.5, .53), Size = UDim2.fromOffset(d, d)}, tile)
+    round(moon, 999)
+    gradient(moon, Color3.fromRGB(255, 255, 255), Color3.fromRGB(188, 178, 236), 45)
+    stroke(moon, T.Accent2, .55, math.max(2, px / 13))
+    for _, c in ipairs({{.56, .16, .24}, {.12, .42, .3}, {.58, .6, .16}}) do
+        local crater = new("Frame", {BackgroundColor3 = Color3.fromRGB(198, 190, 232), BorderSizePixel = 0,
+            Position = UDim2.fromScale(c[1], c[2]), Size = UDim2.fromScale(c[3], c[3])}, moon)
+        round(crater, 999)
+    end
+    local spark = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, AnchorPoint = Vector2.new(.5, .5),
+        Position = UDim2.fromScale(.78, .24), Size = UDim2.fromScale(.12, .12), Rotation = 45}, tile)
+    round(spark, 1)
+    return tile, ug
 end
 
 local function pill(parent, label, T, accent, order)
@@ -262,8 +285,8 @@ function LunarGui.new(options)
     new("ImageLabel", {Name = "Shadow", BackgroundTransparency = 1, Image = "rbxassetid://6014261993", ImageColor3 = Color3.new(0, 0, 0),
         ImageTransparency = .45, ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(49, 49, 450, 450),
         AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromScale(.5, .5), Size = UDim2.new(1, 70, 1, 70), ZIndex = 0}, self.Root)
-    self.Window = new("Frame", {Name = "Window", BackgroundColor3 = T.Background, BorderSizePixel = 0,
-        ClipsDescendants = true, Size = UDim2.fromScale(1, 1), ZIndex = 1}, self.Root)
+    self.Window = new("CanvasGroup", {Name = "Window", BackgroundColor3 = T.Background, BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1), ZIndex = 1}, self.Root)
     round(self.Window, 16)
     gradient(stroke(self.Window, WHITE, .15, 1.2), T.Stroke, T.Accent, 60)
 
@@ -275,10 +298,13 @@ function LunarGui.new(options)
     if options.BackgroundUrl ~= false then SetCover(self.BG, options.BackgroundUrl or DEFAULT_BACKGROUND_URL, "LunarHub_Background.png") end
 
     -- Title bar
-    self.Top = new("Frame", {Name = "Top", BackgroundColor3 = T.Sidebar, BackgroundTransparency = .1, BorderSizePixel = 0,
+    self.Top = new("Frame", {Name = "Top", BackgroundColor3 = T.Sidebar, BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 50), ZIndex = 3}, self.Window)
+    round(self.Top, 16) -- rounded top corners (ClipsDescendants does not round children)
+    new("Frame", {BackgroundColor3 = T.Sidebar, BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 16)}, self.Top)
     new("Frame", {BackgroundColor3 = T.Stroke, BackgroundTransparency = .35, BorderSizePixel = 0,
-        AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 1)}, self.Top)
+        AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 1), ZIndex = 2}, self.Top)
 
     local lights = new("Frame", {BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 0), Size = UDim2.new(0, 66, 1, 0)}, self.Top)
     new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
@@ -295,7 +321,9 @@ function LunarGui.new(options)
     lights.MouseEnter:Connect(function() for _, g in ipairs(glyphs) do tween(g, {TextTransparency = 0}, .15) end end)
     lights.MouseLeave:Connect(function() for _, g in ipairs(glyphs) do tween(g, {TextTransparency = 1}, .15) end end)
 
-    local info = new("Frame", {BackgroundTransparency = 1, Position = UDim2.fromOffset(92, 0), Size = UDim2.new(1, -100, 1, 0)}, self.Top)
+    lights.Visible = options.TrafficLights ~= false
+    local infoX = options.TrafficLights == false and 16 or 92
+    local info = new("Frame", {BackgroundTransparency = 1, Position = UDim2.fromOffset(infoX, 0), Size = UDim2.new(1, -(infoX + 8), 1, 0)}, self.Top)
     new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
         Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder}, info)
     local logo = makeLogo(info, 30, options, T); logo.LayoutOrder = 1
@@ -306,10 +334,14 @@ function LunarGui.new(options)
     self.VersionPill = pill(info, options.Version or "v1.0.0", T, false, 4)
 
     -- Side bar
-    self.Side = new("Frame", {Name = "Side", BackgroundColor3 = T.Sidebar, BackgroundTransparency = .12, BorderSizePixel = 0,
+    self.Side = new("Frame", {Name = "Side", BackgroundColor3 = T.Sidebar, BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 50), Size = UDim2.new(0, 190, 1, -50), ZIndex = 2}, self.Window)
+    round(self.Side, 16) -- only the bottom-left corner stays rounded
+    new("Frame", {BackgroundColor3 = T.Sidebar, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 16)}, self.Side)
+    new("Frame", {BackgroundColor3 = T.Sidebar, BorderSizePixel = 0, AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 16, 1, 0)}, self.Side)
     new("Frame", {BackgroundColor3 = T.Stroke, BackgroundTransparency = .35, BorderSizePixel = 0,
-        AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 1, 1, 0)}, self.Side)
+        AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 1, 1, 0), ZIndex = 2}, self.Side)
     self.TabList = new("ScrollingFrame", {BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 12),
         Size = UDim2.new(1, -20, 1, -84), AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
         ScrollBarThickness = 0}, self.Side)
@@ -356,18 +388,26 @@ function LunarGui.new(options)
         self._iconOnly = compact
         self.Profile.Visible = not tight
         self.TabList.Size = UDim2.new(1, -20, 1, tight and -24 or -84)
-        for _, t in ipairs(self.Tabs) do t.Label.Visible = not self._iconOnly end
+        for _, t in ipairs(self.Tabs) do
+            t.Label.Visible = not compact
+            t.Tile.Position = compact and UDim2.new(.5, -14, 0, 8) or UDim2.fromOffset(8, 8)
+        end
     end
     self.Window:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
     layout()
 
     function self:RefreshFloating()
         if self.ToggleButton then self.ToggleButton.Visible = self.ShowFloating ~= false or not self._visible end
+        if self._toggleDot then tween(self._toggleDot, {BackgroundColor3 = self._visible and T.Green or T.Track}, .2) end
     end
     -- Window show / hide
     function self:SetVisible(v)
         self._visible = v and true or false
         self:RefreshFloating()
+        if self._tScale then
+            tween(self._tScale, {Scale = 1.22}, .1)
+            task.delay(.1, function() if self._tScale then tween(self._tScale, {Scale = 1}, .45, Enum.EasingStyle.Back) end end)
+        end
         if v then
             self.Root.Visible = true
             self._scale.Scale = .9
@@ -500,38 +540,63 @@ function LunarGui.new(options)
         table.insert(self._connections, workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitViewport))
     end
 
-    -- Floating toggle button
+    -- Floating logo button: tap = show / hide, drag = move. Always kept inside the screen.
+    local TOG = 56
+    local vp0 = viewport()
+    local tCenter = Vector2.new(vp0.X - TOG / 2 - 16, vp0.Y * .42)
     self.ToggleButton = new("TextButton", {Name = "LunarGuiToggle", AutoButtonColor = false, Text = "", BackgroundTransparency = 1,
-        AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -22, 1, -120), Size = UDim2.fromOffset(54, 54), ZIndex = 300}, self.Screen)
-    new("ImageLabel", {BackgroundTransparency = 1, Image = "rbxassetid://6014261993", ImageColor3 = T.Accent, ImageTransparency = .6,
+        AnchorPoint = Vector2.new(.5, .5), Position = UDim2.fromOffset(tCenter.X, tCenter.Y), Size = UDim2.fromOffset(TOG, TOG), ZIndex = 300}, self.Screen)
+    local tGlow = new("ImageLabel", {BackgroundTransparency = 1, Image = "rbxassetid://6014261993", ImageColor3 = T.Accent, ImageTransparency = .55,
         ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(49, 49, 450, 450), AnchorPoint = Vector2.new(.5, .5),
-        Position = UDim2.fromScale(.5, .5), Size = UDim2.new(1, 34, 1, 34)}, self.ToggleButton)
-    makeLogo(self.ToggleButton, 54, options, T)
+        Position = UDim2.fromScale(.5, .5), Size = UDim2.new(1, 38, 1, 38)}, self.ToggleButton)
+    TweenService:Create(tGlow, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {ImageTransparency = .82}):Play()
+    local logoTile, logoGrad = makeLogo(self.ToggleButton, TOG, options, T)
+    if logoGrad then
+        self._spin = TweenService:Create(logoGrad, TweenInfo.new(5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), {Rotation = 405})
+        self._spin:Play()
+    end
+    local dotStatus = new("Frame", {BackgroundColor3 = T.Green, BorderSizePixel = 0, AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -1, 0, 1), Size = UDim2.fromOffset(13, 13), ZIndex = 5}, self.ToggleButton)
+    round(dotStatus, 7); stroke(dotStatus, T.Background, 0, 2)
+    self._toggleDot = dotStatus
     local tScale = new("UIScale", {Scale = 1}, self.ToggleButton)
     self._tScale = tScale
+
+    local function setToggle(v)
+        local vs, half = viewport(), TOG / 2 + 6
+        tCenter = Vector2.new(math.clamp(v.X, half, math.max(half, vs.X - half)), math.clamp(v.Y, half, math.max(half, vs.Y - half)))
+        self.ToggleButton.Position = UDim2.fromOffset(tCenter.X, tCenter.Y)
+    end
+    setToggle(tCenter)
+    if workspace.CurrentCamera then
+        table.insert(self._connections, workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function() setToggle(tCenter) end))
+    end
+
     self.ToggleButton.MouseEnter:Connect(function() tween(tScale, {Scale = 1.08}, .2, Enum.EasingStyle.Back) end)
     self.ToggleButton.MouseLeave:Connect(function() tween(tScale, {Scale = 1}, .2) end)
-
-    local fInput, fStart, fPos, fMoved = nil, nil, nil, false
+    local fInput, fStart, fOrigin, fMoved = nil, nil, nil, false
     self.ToggleButton.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            fInput, fStart, fPos, fMoved = input, input.Position, self.ToggleButton.Position, false
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not fInput then
+            fInput, fStart, fOrigin, fMoved = input, input.Position, tCenter, false
+            tween(tScale, {Scale = .9}, .1)
         end
     end)
     table.insert(self._connections, UIS.InputChanged:Connect(function(input)
         if fInput and ((fInput.UserInputType == Enum.UserInputType.Touch and input == fInput)
             or (fInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)) then
             local d = input.Position - fStart
-            if math.abs(d.X) + math.abs(d.Y) > 8 then fMoved = true end
-            self.ToggleButton.Position = UDim2.new(fPos.X.Scale, fPos.X.Offset + d.X, fPos.Y.Scale, fPos.Y.Offset + d.Y)
+            if fMoved or d.Magnitude > 10 then fMoved = true; setToggle(fOrigin + Vector2.new(d.X, d.Y)) end
         end
     end))
     table.insert(self._connections, UIS.InputEnded:Connect(function(input)
-        if fInput and (input == fInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
-            if not fMoved then self:SetVisible(not self._visible) end
+        if fInput and (input == fInput or (fInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseButton1)) then
+            local moved = fMoved
             fInput = nil
+            tween(tScale, {Scale = 1}, .3, Enum.EasingStyle.Back)
+            if not moved then self:SetVisible(not self._visible) end
         end
     end))
+    self:RefreshFloating()
 
     if options.BuiltinTabs ~= false then
         self:_buildOverview(options)
@@ -557,6 +622,8 @@ function LunarGui:CreateTab(options)
     tab.Stroke = stroke(tab.Button, T.Stroke, 1, 1)
     local tile = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(28, 28)}, tab.Button)
     round(tile, 8); gradient(tile, color:Lerp(WHITE, .3), color:Lerp(Color3.new(0, 0, 0), .2), 90)
+    tab.Tile = tile
+    if gui._iconOnly then tile.Position = UDim2.new(.5, -14, 0, 8) end
     makeIcon(tile, tab.Icon, 15, WHITE)
     tab.Label = text(tab.Button, {Text = tab.Name, TextSize = 13, TextColor3 = T.Muted, TextTruncate = Enum.TextTruncate.AtEnd,
         Position = UDim2.fromOffset(46, 0), Size = UDim2.new(1, -52, 1, 0)})
@@ -947,6 +1014,7 @@ function LunarGui:ListConfigs()
     return list
 end
 function LunarGui:Destroy()
+    if self._spin then pcall(function() self._spin:Cancel() end) end
     for _, c in ipairs(self._connections) do pcall(function() c:Disconnect() end) end
     if self.Picker then self.Picker:Destroy() end
     if self.Screen then self.Screen:Destroy() end
@@ -1034,7 +1102,7 @@ end
 function LunarGui:_buildSettings(options)
     local gui = self
     gui._noSave = true -- settings controls are not part of saved configs
-    local tab = self:CreateTab({Name = "Settings", Icon = "⚙", Color = Color3.fromRGB(113, 113, 142), Order = 9999})
+    local tab = self:CreateTab({Name = "Settings", Icon = "⚙", Color = Color3.fromRGB(20, 184, 166), Order = 9999})
 
     local general = tab:CreateSection({Name = "General", Icon = "⚙"})
     general:CreateToggle({Name = "Show Floating Button", Description = "แสดงปุ่มพระจันทร์ลอยบนหน้าจอ", Default = true,
