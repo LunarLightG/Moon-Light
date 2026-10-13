@@ -1,6 +1,8 @@
 --[[
     LunarGui  |  Premium Interface
-    - Window: draggable title bar, resize from right edge / bottom edge / corner
+    - Window: draggable title bar, resize with the bottom-right grip (live size tip, Compact mode when narrow)
+    - Built-in tabs: Overview (profile / Players / Ping / FPS / game info) and Settings (General / Panel / Config)
+    - Pass BuiltinTabs = false to LunarGui.new to skip them
     - Traffic lights: red = hide, yellow = reset size, green = maximize / restore
     - Components: Label, Button, Toggle, Slider, Dropdown, Textbox, Keybind
     - Every component accepts  Description  (small grey sub-text)
@@ -14,6 +16,9 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local Stats = game:GetService("Stats")
 
 ---------------------------------------------------------------------
 -- Image download / cache (GitHub etc.)
@@ -54,6 +59,33 @@ local function SetCover(imageLabel, url, fileName)
             warn("[LunarGui] Could not convert image: " .. tostring(asset))
         end
     end)
+end
+
+-- Default config storage (executor file API). Returns nil when unsupported.
+function LunarGui._defaultPersistence(name)
+    if not (type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function") then return nil end
+    local safe = tostring(name):gsub("[^%w_%-]", "_")
+    local folder = "LunarGui_" .. safe
+    pcall(function() if makefolder and isfolder and not isfolder(folder) then makefolder(folder) end end)
+    local function path(n) return folder .. "/" .. n .. ".json" end
+    return {
+        Save = function(n, json) writefile(path(n), json) end,
+        Load = function(n) if isfile(path(n)) then return readfile(path(n)) end end,
+        Delete = function(n) if delfile and isfile(path(n)) then delfile(path(n)) end end,
+        List = function()
+            local out = {}
+            if listfiles then
+                local ok, files = pcall(listfiles, folder)
+                if ok and type(files) == "table" then
+                    for _, f in ipairs(files) do
+                        local n = tostring(f):match("([^/\\]+)%.json$")
+                        if n then table.insert(out, n) end
+                    end
+                end
+            end
+            return out
+        end,
+    }
 end
 
 local DEFAULT_BACKGROUND_URL = "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/Assets/background.png"
@@ -194,6 +226,8 @@ function LunarGui.new(options)
     local T = self.Theme
     self.Values, self.Bindings, self.Tabs, self.Configs = {}, {}, {}, {}
     self.SelectedConfig, self.Persistence, self._connections = nil, options.Persistence, {}
+    if self.Persistence == nil then self.Persistence = LunarGui._defaultPersistence(self.Name) end
+    self.ShowFloating = true
     self._visible, self._idn = true, 0
     local pg = options.Parent or (player and player:WaitForChild("PlayerGui"))
     assert(pg, "LunarGui requires PlayerGui or options.Parent")
@@ -205,12 +239,15 @@ function LunarGui.new(options)
         local c = workspace.CurrentCamera
         return c and c.ViewportSize or Vector2.new(1280, 720)
     end
-    local MIN_W, MIN_H, MAX_W, MAX_H = 440, 280, 1100, 780
-    local function defaultSize()
+    local LIM = {minW = 340, minH = 260, maxW = 850, maxH = 560, defW = 600, defH = 370}
+    self.SizeLimits = LIM
+    local function clampSize(w, h)
         local v = viewport()
-        local w = math.min(math.clamp(math.floor(v.X * .62), 460, 780), v.X - 16)
-        local h = math.min(math.clamp(math.floor(v.Y * .76), 300, 540), v.Y - 16)
-        return Vector2.new(w, h)
+        local maxW, maxH = math.min(LIM.maxW, v.X - 8), math.min(LIM.maxH, v.Y - 8)
+        return math.clamp(w, math.min(LIM.minW, maxW), maxW), math.clamp(h, math.min(LIM.minH, maxH), maxH)
+    end
+    local function defaultSize()
+        return Vector2.new(clampSize(LIM.defW, LIM.defH))
     end
     local function centered(sz)
         local v = viewport()
@@ -304,7 +341,9 @@ function LunarGui.new(options)
     local function layout()
         local w = self.Window.AbsoluteSize.X
         if w <= 0 then return end
-        local sw = w < 540 and 140 or (w < 680 and 172 or 196)
+        local compact = w < 480
+        local tight = self.Window.AbsoluteSize.Y < 320
+        local sw = compact and 56 or (w < 640 and 160 or 190)
         self.Side.Size = UDim2.new(0, sw, 1, -50)
         self.Content.Position, self.Content.Size = UDim2.fromOffset(sw, 50), UDim2.new(1, -sw, 1, -50)
         local narrow = sw < 150
@@ -312,14 +351,23 @@ function LunarGui.new(options)
         self.Avatar.Position = narrow and UDim2.new(.5, -17, 0, 8) or UDim2.fromOffset(9, 8)
         self.Dot.Position = narrow and UDim2.new(.5, 17, 0, 44) or UDim2.fromOffset(46, 44)
         self.VersionPill.Visible = w >= 580
-        self.TagPill.Visible = w >= 470
+        self.TagPill.Visible = w >= 480
+        self.Title.Visible = w >= 340
+        self._iconOnly = compact
+        self.Profile.Visible = not tight
+        self.TabList.Size = UDim2.new(1, -20, 1, tight and -24 or -84)
+        for _, t in ipairs(self.Tabs) do t.Label.Visible = not self._iconOnly end
     end
     self.Window:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
     layout()
 
+    function self:RefreshFloating()
+        if self.ToggleButton then self.ToggleButton.Visible = self.ShowFloating ~= false or not self._visible end
+    end
     -- Window show / hide
     function self:SetVisible(v)
         self._visible = v and true or false
+        self:RefreshFloating()
         if v then
             self.Root.Visible = true
             self._scale.Scale = .9
@@ -334,19 +382,15 @@ function LunarGui.new(options)
     -- Traffic lights
     local maximized, restore = false, nil
     light(T.Red, "×", 1, function() self:SetVisible(false) end)
-    light(T.Yellow, "↺", 2, function()
-        local sz = defaultSize(); maximized = false
-        tween(self.Root, {Size = UDim2.fromOffset(sz.X, sz.Y), Position = centered(sz)}, .35)
-    end)
+    light(T.Yellow, "↺", 2, function() maximized = false; self:FitPanel(LIM.defW, LIM.defH, true) end)
     light(T.MacGreen, "+", 3, function()
-        local v = viewport()
         if not maximized then
             restore = {self.Root.Position, self.Root.Size}
             maximized = true
-            tween(self.Root, {Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(v.X - 16, v.Y - 16)}, .35)
+            self:FitPanel(LIM.maxW, LIM.maxH, true)
         else
             maximized = false
-            if restore then tween(self.Root, {Position = restore[1], Size = restore[2]}, .35) end
+            if restore then tween(self.Root, {Position = restore[1], Size = restore[2]}, .3) end
         end
     end)
 
@@ -371,51 +415,86 @@ function LunarGui.new(options)
         end
     end))
 
-    -- Resizing: right edge, bottom edge and corner
-    local rInput, rStart, rSize, rx, ry, dots = nil, nil, nil, 0, 0, {}
-    local function addHandle(pos, size, ax, ay)
-        local h = new("TextButton", {Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = pos, Size = size, ZIndex = 60}, self.Root)
-        h.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                rInput, rStart, rSize, rx, ry = input, input.Position, self.Root.AbsoluteSize, ax, ay
-                maximized = false
-                for _, d in ipairs(dots) do tween(d, {BackgroundColor3 = T.Accent, BackgroundTransparency = 0}, .15) end
-            end
-        end)
-        return h
+    function self:SetPanelSize(w, h)
+        local cw, ch = clampSize(w, h)
+        local v = viewport()
+        local px, py = self.Root.Position.X.Offset, self.Root.Position.Y.Offset
+        self.Root.Size = UDim2.fromOffset(cw, ch)
+        self.Root.Position = UDim2.fromOffset(math.clamp(px, 0, math.max(0, v.X - cw)), math.clamp(py, 0, math.max(0, v.Y - ch)))
     end
-    addHandle(UDim2.new(1, -8, 0, 20), UDim2.new(0, 14, 1, -44), 1, 0)
-    addHandle(UDim2.new(0, 20, 1, -8), UDim2.new(1, -44, 0, 14), 0, 1)
-    local corner = addHandle(UDim2.new(1, -26, 1, -26), UDim2.fromOffset(26, 26), 1, 1)
-    for _, p in ipairs({{15, 15}, {9, 15}, {15, 9}, {3, 15}, {15, 3}, {9, 9}}) do
-        local d = new("Frame", {BackgroundColor3 = T.Muted, BackgroundTransparency = .35, BorderSizePixel = 0,
-            Position = UDim2.fromOffset(p[1], p[2]), Size = UDim2.fromOffset(3, 3), Active = false}, corner)
+    function self:FitPanel(w, h, recenter)
+        local cw, ch = clampSize(w, h)
+        local v = viewport()
+        local x, y
+        if recenter then
+            x, y = (v.X - cw) / 2, (v.Y - ch) / 2
+        else
+            x = math.clamp(self.Root.Position.X.Offset, 0, math.max(0, v.X - cw))
+            y = math.clamp(self.Root.Position.Y.Offset, 0, math.max(0, v.Y - ch))
+        end
+        tween(self.Root, {Size = UDim2.fromOffset(cw, ch), Position = UDim2.fromOffset(x, y)}, .25)
+    end
+
+    -- Resize grip (bottom-right) with a live size tip
+    local grip = new("TextButton", {Name = "ResizeGrip", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -3, 1, -3),
+        Size = UDim2.fromOffset(26, 26), BackgroundTransparency = 1, AutoButtonColor = false, Text = "", ZIndex = 100}, self.Window)
+    local dots = {}
+    for _, p in ipairs({{18, 18}, {18, 11}, {11, 18}, {18, 4}, {4, 18}, {11, 11}}) do
+        local d = new("Frame", {BackgroundColor3 = T.Track, BorderSizePixel = 0, Position = UDim2.fromOffset(p[1], p[2]),
+            Size = UDim2.fromOffset(3, 3), ZIndex = 101}, grip)
         round(d, 2); dots[#dots + 1] = d
     end
+    local gripHover, gripActive = false, false
+    local function paintGrip()
+        local c = (gripHover or gripActive) and T.Accent2 or T.Track
+        for _, d in ipairs(dots) do tween(d, {BackgroundColor3 = c}, .15) end
+    end
+    grip.MouseEnter:Connect(function() gripHover = true; paintGrip() end)
+    grip.MouseLeave:Connect(function() gripHover = false; paintGrip() end)
+
+    local tip = new("Frame", {AnchorPoint = Vector2.new(.5, 1), Position = UDim2.new(.5, 0, 1, -14), AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.fromOffset(0, 26), BackgroundColor3 = T.Panel, Visible = false, ZIndex = 250}, self.Window)
+    round(tip, 13); gradient(stroke(tip, WHITE, .1, 1.5), T.Accent, T.Accent2, 45)
+    new("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12)}, tip)
+    local tipLabel = text(tip, {Text = "", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = T.Text,
+        AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.new(0, 0, 1, 0), ZIndex = 251})
+    local tipToken = 0
+    local function showTip()
+        tipToken = tipToken + 1
+        local token = tipToken
+        local sz = self.Root.AbsoluteSize
+        tipLabel.Text = string.format("%d × %d%s", sz.X, sz.Y, sz.X < 480 and "  ·  Compact" or "")
+        tip.Visible = true
+        task.delay(.9, function() if token == tipToken and tip.Parent and not gripActive then tip.Visible = false end end)
+    end
+
+    local gInput, gStart, gSize = nil, nil, nil
+    grip.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            gInput, gStart, gSize = input, input.Position, self.Root.AbsoluteSize
+            gripActive, maximized = true, false
+            paintGrip()
+        end
+    end)
     table.insert(self._connections, UIS.InputChanged:Connect(function(input)
-        if rInput and ((rInput.UserInputType == Enum.UserInputType.Touch and input == rInput)
-            or (rInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)) then
-            local d, v, pos = input.Position - rStart, viewport(), self.Root.AbsolutePosition
-            local w, h = rSize.X, rSize.Y
-            if rx == 1 then w = math.clamp(rSize.X + d.X, MIN_W, math.max(MIN_W, math.min(MAX_W, v.X - pos.X - 4))) end
-            if ry == 1 then h = math.clamp(rSize.Y + d.Y, MIN_H, math.max(MIN_H, math.min(MAX_H, v.Y - pos.Y - 4))) end
-            self.Root.Size = UDim2.fromOffset(w, h)
+        if gInput and ((gInput.UserInputType == Enum.UserInputType.Touch and input == gInput)
+            or (gInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+            local d = input.Position - gStart
+            self:SetPanelSize(gSize.X + d.X, gSize.Y + d.Y)
+            showTip()
         end
     end))
     table.insert(self._connections, UIS.InputEnded:Connect(function(input)
-        if rInput and (input == rInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
-            rInput = nil
-            for _, d in ipairs(dots) do tween(d, {BackgroundColor3 = T.Muted, BackgroundTransparency = .35}, .2) end
+        if gInput and (input == gInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            gInput, gripActive = nil, false
+            paintGrip(); showTip()
         end
     end))
 
     -- Keep the window inside the screen when the viewport changes
     local function fitViewport()
-        local v, sz = viewport(), self.Root.AbsoluteSize
-        local w, h = math.min(sz.X, v.X - 8), math.min(sz.Y, v.Y - 8)
-        local p = self.Root.AbsolutePosition
-        self.Root.Size = UDim2.fromOffset(w, h)
-        self.Root.Position = UDim2.fromOffset(math.clamp(p.X, 0, math.max(0, v.X - w)), math.clamp(p.Y, 0, math.max(0, v.Y - h)))
+        local sz = self.Root.AbsoluteSize
+        self:SetPanelSize(sz.X, sz.Y)
     end
     if workspace.CurrentCamera then
         table.insert(self._connections, workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitViewport))
@@ -429,6 +508,7 @@ function LunarGui.new(options)
         Position = UDim2.fromScale(.5, .5), Size = UDim2.new(1, 34, 1, 34)}, self.ToggleButton)
     makeLogo(self.ToggleButton, 54, options, T)
     local tScale = new("UIScale", {Scale = 1}, self.ToggleButton)
+    self._tScale = tScale
     self.ToggleButton.MouseEnter:Connect(function() tween(tScale, {Scale = 1.08}, .2, Enum.EasingStyle.Back) end)
     self.ToggleButton.MouseLeave:Connect(function() tween(tScale, {Scale = 1}, .2) end)
 
@@ -453,6 +533,10 @@ function LunarGui.new(options)
         end
     end))
 
+    if options.BuiltinTabs ~= false then
+        self:_buildOverview(options)
+        self:_buildSettings(options)
+    end
     return self
 end
 
@@ -464,9 +548,11 @@ function LunarGui:CreateTab(options)
     local gui, T = self, self.Theme
     local tab = {Name = options.Name or ("Tab" .. (#self.Tabs + 1)), Icon = options.Icon or "✦", Sections = {}}
     local color = options.Color or TabColors[(#self.Tabs % #TabColors) + 1]
+    local order = options.Order
+    if not order then self._userTabN = (self._userTabN or 0) + 1; order = self._userTabN end
 
     tab.Button = new("TextButton", {AutoButtonColor = false, Text = "", BackgroundColor3 = T.Row, BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 44), LayoutOrder = #self.Tabs + 1}, self.TabList)
+        Size = UDim2.new(1, 0, 0, 44), LayoutOrder = order}, self.TabList)
     round(tab.Button, 12)
     tab.Stroke = stroke(tab.Button, T.Stroke, 1, 1)
     local tile = new("Frame", {BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(28, 28)}, tab.Button)
@@ -474,6 +560,7 @@ function LunarGui:CreateTab(options)
     makeIcon(tile, tab.Icon, 15, WHITE)
     tab.Label = text(tab.Button, {Text = tab.Name, TextSize = 13, TextColor3 = T.Muted, TextTruncate = Enum.TextTruncate.AtEnd,
         Position = UDim2.fromOffset(46, 0), Size = UDim2.new(1, -52, 1, 0)})
+    tab.Label.Visible = not gui._iconOnly
     tab.Button.MouseEnter:Connect(function()
         if gui.ActiveTab ~= tab then tween(tab.Button, {BackgroundTransparency = .6}, .15); tween(tab.Label, {TextColor3 = T.Text}, .15) end
     end)
@@ -525,6 +612,7 @@ function LunarGui:CreateTab(options)
 
         local function nextId(prefix) gui._idn = gui._idn + 1; return prefix .. gui._idn end
         function section:_register(id, setter, getter, kind)
+            if gui._noSave then return end
             gui.Bindings[id] = {Set = setter, Get = getter, Type = kind}
             if gui.Values[id] == nil then gui.Values[id] = getter() end
             table.insert(self.Components, id)
@@ -675,6 +763,7 @@ function LunarGui:CreateTab(options)
             pillBtn.Activated:Connect(picker)
             self:_register(id, function(v) value = v; chosen.Text = v == nil and "Select..." or tostring(v) end, function() return value end, "Dropdown")
             return {Get = function() return value end, Open = picker, Instance = row,
+                Clear = function() value = nil; chosen.Text = "Select..."; chosen.TextColor3 = T.Muted end,
                 Set = function(v) for _, x in ipairs(o.Options or {}) do if x == v then value = v; chosen.Text = tostring(v); chosen.TextColor3 = T.Text; gui.Values[id] = v; return true end end return false end}
         end
 
@@ -828,10 +917,15 @@ function LunarGui:LoadConfig(name)
 end
 function LunarGui:DeleteConfig(name)
     name = tostring(name or self.SelectedConfig or "")
-    if not self.Configs[name] then return false end
-    self.Configs[name] = nil; if self.SelectedConfig == name then self.SelectedConfig = nil end
-    if self.Persistence and self.Persistence.Delete then pcall(self.Persistence.Delete, name) end
-    return true
+    if name == "" then return false end
+    local had = self.Configs[name] ~= nil
+    self.Configs[name] = nil
+    if self.SelectedConfig == name then self.SelectedConfig = nil end
+    if self.Persistence and self.Persistence.Delete then
+        local ok = pcall(self.Persistence.Delete, name)
+        had = had or ok
+    end
+    return had
 end
 function LunarGui:RenameConfig(oldName, newName)
     if not self.Configs[oldName] or self.Configs[newName] or newName == "" then return false end
@@ -842,12 +936,164 @@ function LunarGui:RenameConfig(oldName, newName)
     return true
 end
 function LunarGui:ListConfigs()
-    local list = {}; for name in pairs(self.Configs) do table.insert(list, name) end; table.sort(list); return list
+    local set, list = {}, {}
+    for name in pairs(self.Configs) do set[name] = true end
+    if self.Persistence and self.Persistence.List then
+        local ok, names = pcall(self.Persistence.List)
+        if ok and type(names) == "table" then for _, n in ipairs(names) do set[n] = true end end
+    end
+    for name in pairs(set) do table.insert(list, name) end
+    table.sort(list)
+    return list
 end
 function LunarGui:Destroy()
     for _, c in ipairs(self._connections) do pcall(function() c:Disconnect() end) end
     if self.Picker then self.Picker:Destroy() end
     if self.Screen then self.Screen:Destroy() end
+end
+
+---------------------------------------------------------------------
+-- Built-in tabs
+---------------------------------------------------------------------
+function LunarGui:_buildOverview(options)
+    local gui, T = self, self.Theme
+    local tab = self:CreateTab({Name = "Overview", Icon = "⌂", Color = TabColors[1], Order = 0})
+    local sec = tab:CreateSection({Name = "Overview", Icon = "◈"})
+    local body, n = sec.Body, 0
+    local function ord(o) n = n + 1; o.LayoutOrder = n; return o end
+
+    -- Profile card
+    local card = ord(new("Frame", {BackgroundColor3 = T.Row, BackgroundTransparency = .05, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 76)}, body))
+    round(card, 12); stroke(card, T.Stroke, .45, 1)
+    local avatar = new("ImageLabel", {BackgroundColor3 = T.Panel, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(56, 56)}, card)
+    round(avatar, 28); gradient(stroke(avatar, WHITE, 0, 2), T.Accent, T.Accent2, 45)
+    text(card, {Text = player and player.DisplayName or "Player", Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = T.Text,
+        TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.fromOffset(78, 9), Size = UDim2.new(1, -170, 0, 20)})
+    text(card, {Text = player and ("@" .. player.Name) or "", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = T.Muted,
+        TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.fromOffset(78, 29), Size = UDim2.new(1, -170, 0, 16)})
+    text(card, {Text = player and ("Account Age: " .. player.AccountAge .. " days") or "", Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = T.Muted,
+        TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.fromOffset(78, 47), Size = UDim2.new(1, -170, 0, 16)})
+    local badge = new("Frame", {BackgroundColor3 = Color3.fromRGB(15, 35, 20), BorderSizePixel = 0, AnchorPoint = Vector2.new(1, .5),
+        Position = UDim2.new(1, -12, .5, 0), Size = UDim2.fromOffset(80, 24)}, card)
+    round(badge, 12); stroke(badge, Color3.fromRGB(60, 160, 80), .2, 1)
+    local dot = new("Frame", {BackgroundColor3 = T.Green, BorderSizePixel = 0, AnchorPoint = Vector2.new(0, .5),
+        Position = UDim2.new(0, 12, .5, 0), Size = UDim2.fromOffset(6, 6)}, badge)
+    round(dot, 3)
+    text(badge, {Text = "ONLINE", Font = Enum.Font.GothamBold, TextSize = 9, TextColor3 = T.Green, Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -26, 1, 0)})
+    if player then task.spawn(function()
+        local ok, image = pcall(function() return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size180x180) end)
+        if ok and avatar.Parent then avatar.Image = image end
+    end) end
+
+    -- Stat tiles
+    local tiles = ord(new("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 60)}, body))
+    new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, tiles)
+    local function tile(label, i)
+        local f = new("Frame", {BackgroundColor3 = T.Row, BackgroundTransparency = .05, BorderSizePixel = 0, Size = UDim2.new(1 / 3, -6, 1, 0), LayoutOrder = i}, tiles)
+        round(f, 12); stroke(f, T.Stroke, .45, 1)
+        local v = text(f, {Text = "-", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Center,
+            Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 26)})
+        text(f, {Text = string.upper(label), Font = Enum.Font.GothamBold, TextSize = 9, TextColor3 = T.Muted, TextXAlignment = Enum.TextXAlignment.Center,
+            Position = UDim2.fromOffset(0, 37), Size = UDim2.new(1, 0, 0, 14)})
+        return v
+    end
+    local playersV, pingV, fpsV = tile("Players", 1), tile("Ping", 2), tile("FPS", 3)
+
+    -- Game info rows
+    local function info(name)
+        local row = ord(makeRow(body, T, {Name = name}, 190, 40))
+        return text(row, {Text = "-", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = T.Muted, TextXAlignment = Enum.TextXAlignment.Right,
+            TextTruncate = Enum.TextTruncate.AtEnd, AnchorPoint = Vector2.new(1, .5), Position = UDim2.new(1, -14, .5, 0), Size = UDim2.fromOffset(180, 30)})
+    end
+    local gameV, placeV, serverV = info("Game"), info("Place ID"), info("Server")
+    gameV.Text = options.GameName or game.Name
+    placeV.Text = tostring(game.PlaceId)
+    serverV.Text = game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Studio"
+    if not options.GameName then task.spawn(function()
+        local ok, infoData = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
+        if ok and infoData and infoData.Name and gameV.Parent then gameV.Text = infoData.Name end
+    end) end
+
+    -- Live stats
+    local acc, frames = 0, 0
+    table.insert(self._connections, RunService.Heartbeat:Connect(function(dt)
+        acc, frames = acc + dt, frames + 1
+        if acc >= .5 then fpsV.Text = tostring(math.floor(frames / acc + .5)); acc, frames = 0, 0 end
+    end))
+    task.spawn(function()
+        while gui.Screen and gui.Screen.Parent do
+            playersV.Text = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
+            local ok, ping = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+            pingV.Text = (ok and ping) and (math.floor(ping) .. "ms") or "N/A"
+            task.wait(1)
+        end
+    end)
+    return tab
+end
+
+function LunarGui:_buildSettings(options)
+    local gui = self
+    gui._noSave = true -- settings controls are not part of saved configs
+    local tab = self:CreateTab({Name = "Settings", Icon = "⚙", Color = Color3.fromRGB(113, 113, 142), Order = 9999})
+
+    local general = tab:CreateSection({Name = "General", Icon = "⚙"})
+    general:CreateToggle({Name = "Show Floating Button", Description = "แสดงปุ่มพระจันทร์ลอยบนหน้าจอ", Default = true,
+        Callback = function(on) gui.ShowFloating = on; gui:RefreshFloating() end})
+    general:CreateToggle({Name = "Background Image", Description = "เปิด/ปิดภาพพื้นหลังของหน้าต่าง", Default = true,
+        Callback = function(on) gui.BG.Visible = on end})
+    general:CreateKeybind({Name = "Toggle UI", Description = "กดเพื่อซ่อน/แสดงหน้าต่าง", Default = Enum.KeyCode.RightShift,
+        Callback = function() gui:SetVisible(not gui._visible) end})
+
+    local panel = tab:CreateSection({Name = "Panel", Icon = "▣"})
+    local L = gui.SizeLimits
+    local sizeMap = {Compact = {L.minW, L.minH}, Default = {L.defW, L.defH}, Large = {L.maxW, L.maxH}}
+    local sizeDD = panel:CreateDropdown({Name = "Panel Size", Description = "เลือกขนาดหน้าต่างสำเร็จรูป", Options = {"Compact", "Default", "Large"}, Default = "Default",
+        Callback = function(v) local sz = sizeMap[v]; if sz then gui:FitPanel(sz[1], sz[2], false) end end})
+    panel:CreateButton({Name = "Reset Interface", Description = "คืนขนาดและตำแหน่งเริ่มต้น",
+        Callback = function() gui:FitPanel(L.defW, L.defH, true); sizeDD.Set("Default"); gui:SelectTab("Overview") end})
+
+    local cfg = tab:CreateSection({Name = "Config", Icon = "💾"})
+    local cfgOptions = {}
+    local nameBox = cfg:CreateTextbox({Name = "Config Name", Description = "ตั้งชื่อก่อนกดบันทึก", Placeholder = "my_config"})
+    local listDD
+    local function clean(nm)
+        nm = tostring(nm or ""):gsub("[^%w _%-]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+        return (nm)
+    end
+    local function refresh()
+        for i = #cfgOptions, 1, -1 do cfgOptions[i] = nil end
+        for _, nm in ipairs(gui:ListConfigs()) do table.insert(cfgOptions, nm) end
+        if not (gui.SelectedConfig and listDD.Set(gui.SelectedConfig)) then listDD.Clear() end
+    end
+    local function say(msg) gui:Notify({Title = "Config", Description = msg}) end
+    listDD = cfg:CreateDropdown({Name = "Saved Configs", Description = "เลือก config ที่บันทึกไว้", Options = cfgOptions,
+        Callback = function(v) gui.SelectedConfig = v; nameBox.Set(v) end})
+    cfg:CreateButton({Name = "Save Config", Description = "บันทึกค่าทุกตัวเลือกในตอนนี้", Callback = function()
+        local nm = clean(nameBox.Get())
+        if nm == "" then nm = gui.SelectedConfig or "" end
+        if nm == "" then return say("ใส่ชื่อ config ก่อนครับ") end
+        local ok, err = gui:SaveConfig(nm)
+        refresh()
+        say(ok and ("บันทึก '" .. nm .. "' แล้ว") or ("บันทึกไม่สำเร็จ: " .. tostring(err)))
+    end})
+    cfg:CreateButton({Name = "Load Config", Description = "โหลดค่าจาก config ที่เลือก", Callback = function()
+        local nm = gui.SelectedConfig or clean(nameBox.Get())
+        if nm == "" then return say("เลือก config ก่อนครับ") end
+        local ok, err = gui:LoadConfig(nm)
+        say(ok and ("โหลด '" .. nm .. "' แล้ว") or ("โหลดไม่สำเร็จ: " .. tostring(err)))
+    end})
+    cfg:CreateButton({Name = "Delete Config", Description = "ลบ config ที่เลือก", Callback = function()
+        local nm = gui.SelectedConfig or clean(nameBox.Get())
+        if nm == "" then return say("เลือก config ก่อนครับ") end
+        local ok = gui:DeleteConfig(nm)
+        refresh()
+        say(ok and ("ลบ '" .. nm .. "' แล้ว") or "ไม่พบ config นี้")
+    end})
+    cfg:CreateButton({Name = "Refresh List", Description = "โหลดรายการ config ใหม่", Callback = refresh})
+    refresh()
+
+    gui._noSave = false
+    return tab
 end
 
 return LunarGui
