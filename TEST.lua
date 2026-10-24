@@ -16,6 +16,7 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Stats = game:GetService("Stats")
+local Lighting = game:GetService("Lighting")
 
 for _, key in ipairs({ "LunarHubCleanup", "DXPanelCleanup" }) do
 	if _G[key] then
@@ -47,11 +48,13 @@ local DEFAULT_SETTINGS = {
 	MonitorX = -1,
 	MonitorY = -1,
 	DefaultConfig = "",
-	BgOpacity = 60,
+	BgOpacity = 0,
 	GroupFrame = true,
 	CompactButtons = false,
 	SectionGap = 14,
 	SectionFade = 50,
+	PanelTransparency = 35,
+	Blur = 10,
 }
 local SETTINGS_FILE = "LunarHub_Settings_" .. SAFE_ID .. ".json"
 
@@ -155,7 +158,7 @@ do
 			if type(data.RainbowSpeed) == "number" then
 				Settings.RainbowSpeed = math.clamp(data.RainbowSpeed, 0.2, 3)
 			end
-			for key, range in pairs({ BgOpacity = { 0, 100 }, SectionGap = { 0, 30 }, SectionFade = { 0, 100 } }) do
+			for key, range in pairs({ BgOpacity = { 0, 100 }, SectionGap = { 0, 30 }, SectionFade = { 0, 100 }, PanelTransparency = { 0, 90 }, Blur = { 0, 24 } }) do
 				if type(data[key]) == "number" then
 					Settings[key] = math.clamp(data[key], range[1], range[2])
 				end
@@ -315,6 +318,9 @@ local LANG_PAIRS = {
 	{ en = "Compact", th = "กะทัดรัด" },
 	{ en = "Section Spacing", th = "ระยะห่างหมวดหมู่" },
 	{ en = "Category Opacity", th = "ความเข้มหมวดหมู่" },
+	{ en = "Panel Transparency", th = "ความโปร่งใสหน้าต่าง" },
+	{ en = "Background Blur", th = "เบลอพื้นหลัง" },
+	{ en = "Test", th = "ทดลอง" },
 	{ en = "Hit by the guard -> picking the animal up again", th = "โดนการ์ดตี -> ไปเก็บสัตว์อีกครั้ง" },
 	{ en = "Animal dropped -> going back to pick it up", th = "สัตว์หลุด/ร่วง -> กลับไปเก็บ" },
 	{ en = "searching eggs...", th = "กำลังหาไข่..." },
@@ -1089,7 +1095,7 @@ local function Viewport()
 	return s
 end
 
-local SIZE = { minW = 340, minH = 260, maxW = 850, maxH = 560, defW = 720, defH = 420 }
+local SIZE = { minW = 340, minH = 260, maxW = 850, maxH = 560, defW = 620, defH = 400 }
 local PanelSize, PanelPos
 
 local function ClampSize(w, h)
@@ -1161,6 +1167,37 @@ local function FitPanel(w, h, recenter)
 	})
 end
 
+-- Blur works on the 3D game view only (GUIs are drawn on top), so with a see-through panel
+-- you get a blurred game behind the hub.
+local BlurFx
+function Actions.ApplyBlur()
+	if not (BlurFx and BlurFx.Parent) then
+		local ok, fx = pcall(function()
+			local old = Lighting:FindFirstChild("LunarHubBlur")
+			if old then
+				old:Destroy()
+			end
+			local b = Instance.new("BlurEffect")
+			b.Name = "LunarHubBlur"
+			b.Size = 0
+			b.Parent = Lighting
+			return b
+		end)
+		BlurFx = ok and fx or nil
+	end
+	if BlurFx then
+		Tween(BlurFx, 0.25, { Size = Actions.PanelOpen and (Settings.Blur or 0) or 0 })
+	end
+end
+addCleanup(function()
+	if BlurFx then
+		pcall(function()
+			BlurFx:Destroy()
+		end)
+		BlurFx = nil
+	end
+end)
+
 local MainGlow = NeonLayers(Root, 16, {
 	{ 3, 0.70, 0.82 },
 	{ 7, 0.82, 0.90 },
@@ -1175,6 +1212,7 @@ local Main = New("Frame", {
 	Name = "Main",
 	Size = UDim2.fromScale(1, 1),
 	BackgroundColor3 = COLOR.black,
+	BackgroundTransparency = (Settings.PanelTransparency or 0) / 100,
 	BorderSizePixel = 0,
 	Active = true,
 	ZIndex = 10,
@@ -1186,6 +1224,17 @@ Gradient(Main, ColorSequence.new({
 	ColorSequenceKeypoint.new(0.55, COLOR.black),
 	ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 22, 31)),
 }), 65)
+
+local CardFrames = setmetatable({}, { __mode = "k" })
+function Actions.ApplyTransparency()
+	local t = math.clamp((Settings.PanelTransparency or 0) / 100, 0, 0.95)
+	Main.BackgroundTransparency = t
+	for card in pairs(CardFrames) do
+		if card.Parent then
+			card.BackgroundTransparency = math.clamp(t * 0.5 + 0.08, 0, 0.95)
+		end
+	end
+end
 
 local BgImage = New("ImageLabel", {
 	Name = "Background",
@@ -1362,7 +1411,7 @@ end)
 Assets.On("Background", function(id)
 	if BgImage.Parent then
 		BgImage.Image = id
-		BgImage.Visible = true
+		BgImage.Visible = Settings.BgOpacity > 0
 		Actions.RefreshSky()
 	end
 end)
@@ -1397,7 +1446,7 @@ local function Notify(text, good)
 	end)
 end
 
-local TOP_H = 98
+local TOP_H = 88
 local Sidebar = New("Frame", {
 	Position = UDim2.new(0, 0, 0, 0),
 	Size = UDim2.new(1, 0, 0, TOP_H),
@@ -1498,9 +1547,13 @@ local LogoGrad = Gradient(LogoLine, ColorSequence.new({
 	ColorSequenceKeypoint.new(1, COLOR.redDark),
 }), 0)
 
+Moon.Visible = false
+LogoTitle.Visible = false
+PanelWord.Visible = false
+
 local Online = Txt(Sidebar, {
-	Position = UDim2.new(0, 15, 0, 55),
-	Size = UDim2.new(1, -30, 0, 18),
+	Position = UDim2.new(0, 58, 0, 27),
+	Size = UDim2.fromOffset(150, 12),
 	Text = "●  " .. Tr("ONLINE"),
 	Font = Enum.Font.GothamMedium,
 	TextSize = 9,
@@ -1519,9 +1572,72 @@ task.spawn(function()
 	end
 end)
 
+local PlayerAvatar = New("ImageLabel", {
+	Position = UDim2.fromOffset(14, 8),
+	Size = UDim2.fromOffset(34, 34),
+	BackgroundColor3 = COLOR.tab,
+	BorderSizePixel = 0,
+	ZIndex = 20,
+}, Sidebar)
+Corner(PlayerAvatar, 17)
+local AvatarRing = Stroke(PlayerAvatar, COLOR.red, 1.5, 0.2)
+OnTheme(function()
+	AvatarRing.Color = COLOR.red
+end)
+
+local PlayerName = Txt(Sidebar, {
+	Position = UDim2.fromOffset(58, 9),
+	Size = UDim2.fromOffset(150, 16),
+	Text = LocalPlayer.DisplayName,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+	ZIndex = 20,
+})
+
+local GameIcon = New("ImageLabel", {
+	Position = UDim2.fromOffset(222, 8),
+	Size = UDim2.fromOffset(34, 34),
+	BackgroundColor3 = COLOR.tab,
+	BorderSizePixel = 0,
+	Image = game.GameId ~= 0 and ("rbxthumb://type=GameIcon&id=" .. game.GameId .. "&w=150&h=150") or "",
+	ScaleType = Enum.ScaleType.Crop,
+	ZIndex = 20,
+}, Sidebar)
+Corner(GameIcon, 9)
+
+local GameTitle = Txt(Sidebar, {
+	Position = UDim2.fromOffset(264, 8),
+	Size = UDim2.new(1, -394, 0, 34),
+	Text = Context.GameName or game.Name,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+	ZIndex = 20,
+})
+
+task.spawn(function()
+	local ok, content = pcall(function()
+		return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	if ok and PlayerAvatar.Parent then
+		PlayerAvatar.Image = content
+	end
+end)
+if not Context.GameName then
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return MarketplaceService:GetProductInfo(game.PlaceId)
+		end)
+		if ok and type(info) == "table" and info.Name and GameTitle.Parent then
+			GameTitle.Text = info.Name
+		end
+	end)
+end
+
 local TabHolder = New("ScrollingFrame", {
-	Position = UDim2.new(0, 14, 0, 52),
-	Size = UDim2.new(1, -28, 0, 38),
+	Position = UDim2.new(0, 14, 0, 50),
+	Size = UDim2.new(1, -28, 0, 30),
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
 	ScrollBarThickness = 0,
@@ -1566,8 +1682,8 @@ local Content = New("Frame", {
 }, Main)
 
 local Header = New("Frame", {
-	Position = UDim2.new(0, 150, 0, 6),
-	Size = UDim2.new(1, -164, 0, 38),
+	Position = UDim2.new(0, 14, 0, 6),
+	Size = UDim2.new(1, -28, 0, 38),
 	BackgroundTransparency = 1,
 	Active = true,
 	ZIndex = 25,
@@ -1575,6 +1691,7 @@ local Header = New("Frame", {
 
 local Title = Txt(Header, {
 	Size = UDim2.new(1, -135, 0, 22),
+	Visible = false,
 	Text = "Overview",
 	Font = Enum.Font.GothamBold,
 	TextSize = 18,
@@ -1584,6 +1701,7 @@ local Title = Txt(Header, {
 Txt(Header, {
 	Position = UDim2.new(0, 0, 0, 21),
 	Size = UDim2.new(1, -135, 0, 14),
+	Visible = false,
 	Text = "LUNAR Hub Premium Interface",
 	TextSize = 10,
 	TextColor3 = COLOR.grey,
@@ -1593,8 +1711,8 @@ Txt(Header, {
 local Close = New("TextButton", {
 	Name = "Close",
 	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, 0, 0, 2),
-	Size = UDim2.fromOffset(34, 34),
+	Position = UDim2.new(1, 0, 0, 5),
+	Size = UDim2.fromOffset(28, 28),
 	BackgroundColor3 = Color3.fromRGB(30, 33, 46),
 	BorderSizePixel = 0,
 	AutoButtonColor = false,
@@ -1604,7 +1722,7 @@ local Close = New("TextButton", {
 	TextColor3 = COLOR.grey,
 	ZIndex = 100,
 }, Header)
-Corner(Close, 10)
+Corner(Close, 8)
 local CloseStroke = Stroke(Close, COLOR.border, 1, 0.1)
 
 track(Close.MouseEnter:Connect(function()
@@ -1619,18 +1737,18 @@ end))
 local function HeaderButton(offsetX, text)
 	local b = New("TextButton", {
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -offsetX, 0, 2),
-		Size = UDim2.fromOffset(40, 34),
+		Position = UDim2.new(1, -offsetX, 0, 5),
+		Size = UDim2.fromOffset(32, 28),
 		BackgroundColor3 = COLOR.tab,
 		BorderSizePixel = 0,
 		AutoButtonColor = false,
 		Text = text,
 		Font = Enum.Font.GothamBold,
-		TextSize = 13,
+		TextSize = 12,
 		TextColor3 = COLOR.white,
 		ZIndex = 100,
 	}, Header)
-	Corner(b, 10)
+	Corner(b, 8)
 	track(b.MouseEnter:Connect(function()
 		Tween(b, 0.15, { BackgroundColor3 = COLOR.tabHover })
 	end))
@@ -1640,7 +1758,7 @@ local function HeaderButton(offsetX, text)
 	return b
 end
 
-local LangBtn = HeaderButton(84, "")
+local LangBtn = HeaderButton(72, "")
 local function PaintLangBtn()
 	LangBtn.Text = Lang.Current == "en" and "TH" or "EN"
 end
@@ -1654,7 +1772,7 @@ track(LangBtn.Activated:Connect(function()
 end))
 
 -- moon button toggles the starry-sky background (off by default for the flat look)
-local MoonBtn = HeaderButton(42, "\u{1F319}")
+local MoonBtn = HeaderButton(36, "\u{1F319}")
 track(MoonBtn.Activated:Connect(function()
 	Actions.SetStars(not Settings.Stars)
 	saveSettings()
@@ -1670,33 +1788,28 @@ local PageHolder = New("Frame", {
 
 local Pages = {}
 local Tabs = {}
+local TabOrder = {}
 
 local layoutCompact, layoutTight
-local ColumnPages = {}
 
 function Actions.ApplyLayout()
 	local compact = PanelSize.X < 480
 	if compact ~= layoutCompact then
 		layoutCompact = compact
-		local left = compact and 56 or 150
-		LogoTitle.Visible = not compact
-		PanelWord.Visible = not compact
-		Online.Visible = false
-		Header.Position = UDim2.new(0, left, 0, 6)
-		Header.Size = UDim2.new(1, -(left + 14), 0, 38)
-		Moon.Position = UDim2.new(0, 14, 0, 9)
+		PlayerName.Size = UDim2.fromOffset(compact and 84 or 150, 16)
+		Online.Size = UDim2.fromOffset(compact and 84 or 150, 12)
+		Online.Visible = true
+		GameIcon.Position = UDim2.fromOffset(compact and 154 or 222, 8)
+		GameTitle.Visible = not compact
 	end
 	for _, tab in pairs(Tabs) do
 		tab.Label.Visible = true
-	end
-	for _, fn in ipairs(ColumnPages) do
-		pcall(fn)
 	end
 end
 
 Lang.OnChange(function()
 	if layoutCompact ~= nil then
-		Online.Text = layoutCompact and "●" or ("●  " .. Tr("ONLINE"))
+		Online.Text = "●  " .. Tr("ONLINE")
 	end
 	if Actions.ActiveTab then
 		Title.Text = Tr(Actions.ActiveTab)
@@ -1808,7 +1921,7 @@ local function CreatePage(name)
 		PaddingBottom = UDim.new(0, 8),
 	}, Page)
 
-	local Layout = New("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, Page)
+	local Layout = New("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, Page)
 	track(Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		Page.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 10)
 	end))
@@ -2007,7 +2120,7 @@ end
 
 local function CreateTab(name, icon)
 	local Button = New("TextButton", {
-		Size = UDim2.new(0, 112, 0, 34),
+		Size = UDim2.new(0, 96, 0, 28),
 		BackgroundColor3 = COLOR.tab,
 		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
@@ -2016,7 +2129,7 @@ local function CreateTab(name, icon)
 		LayoutOrder = ord(TabHolder),
 		ZIndex = 30,
 	}, TabHolder)
-	Corner(Button, 10)
+	Corner(Button, 8)
 
 	local Bar = New("Frame", {
 		Position = UDim2.new(0, 5, 0.5, -8),
@@ -2046,7 +2159,7 @@ local function CreateTab(name, icon)
 	else
 		Icon = Txt(Button, {
 			Position = UDim2.new(0, 11, 0, 0),
-			Size = UDim2.fromOffset(20, 32),
+			Size = UDim2.fromOffset(20, 28),
 			Text = iconStr,
 			Font = Enum.Font.GothamBold,
 			TextSize = 12,
@@ -2056,8 +2169,8 @@ local function CreateTab(name, icon)
 	end
 
 	local Label = Txt(Button, {
-		Position = UDim2.new(0, 37, 0, 0),
-		Size = UDim2.new(1, -42, 0, 32),
+		Position = UDim2.new(0, 32, 0, 0),
+		Size = UDim2.new(1, -36, 0, 28),
 		Text = name,
 		Font = Enum.Font.GothamMedium,
 		TextColor3 = COLOR.grey,
@@ -2074,6 +2187,7 @@ local function CreateTab(name, icon)
 		Active = false,
 	}
 	Tabs[name] = tab
+	table.insert(TabOrder, name)
 
 	local function IconColor(c, instant)
 		if tab.IconParts then
@@ -2270,7 +2384,7 @@ local function Section(parent, text)
 	end
 	local Holder = New("TextButton", {
 		Name = "SectionHeader",
-		Size = UDim2.new(1, 0, 0, 26 + gapNow()),
+		Size = UDim2.new(1, 0, 0, 24 + gapNow()),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		AutoButtonColor = false,
@@ -2279,7 +2393,7 @@ local function Section(parent, text)
 	}, parent)
 	local Inner = New("Frame", {
 		Position = UDim2.fromOffset(0, gapNow()),
-		Size = UDim2.new(1, 0, 0, 26),
+		Size = UDim2.new(1, 0, 0, 24),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Active = false,
@@ -2322,11 +2436,11 @@ local function Section(parent, text)
 	BottomLine.Visible = false
 
 	local Label = Txt(Inner, {
-		Position = UDim2.new(0, 2, 0, 2),
-		Size = UDim2.new(1, -32, 0, 22),
+		Position = UDim2.new(0, 2, 0, 1),
+		Size = UDim2.new(1, -28, 0, 22),
 		Text = Tr(text),
 		Font = Enum.Font.GothamBold,
-		TextSize = 15,
+		TextSize = 13,
 		TextTransparency = 0,
 		ZIndex = 3,
 	})
@@ -2335,10 +2449,10 @@ local function Section(parent, text)
 	end)
 
 	local Badge = MakeArrowBadge(Inner, {
-		Size = 18,
+		Size = 16,
 		Z = 4,
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -10, 0, 12),
+		Position = UDim2.new(1, -6, 0, 12),
 	})
 
 	local sec = { Holder = Holder, Collapsed = false }
@@ -2445,7 +2559,7 @@ local function Section(parent, text)
 		Label.TextTransparency = 0
 		BottomLine.BackgroundTransparency = 1 - s * 0.6
 		AccentBar.BackgroundTransparency = math.max(0, 1 - s * 1.1)
-		Holder.Size = UDim2.new(1, 0, 0, 26 + gapNow())
+		Holder.Size = UDim2.new(1, 0, 0, 24 + gapNow())
 		Inner.Position = UDim2.fromOffset(0, gapNow())
 		paintArrow()
 	end
@@ -2498,6 +2612,7 @@ local function CardBase(parent, height, class)
 	local Holder = New(class or "Frame", {
 		Size = UDim2.new(1, 0, 0, height),
 		BackgroundColor3 = COLOR.innerBg,
+		BackgroundTransparency = 0.2,
 		BorderSizePixel = 0,
 		LayoutOrder = ord(parent),
 		ZIndex = 50,
@@ -2506,9 +2621,9 @@ local function CardBase(parent, height, class)
 		Holder.AutoButtonColor = false
 		Holder.Text = ""
 	end
-	Corner(Holder, 10)
+	Corner(Holder, 8)
 	Gradient(Holder, ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(200, 200, 212)), 0)
-	local S = Stroke(Holder, COLOR.innerBorder, 1.5, 0)
+	local S = Stroke(Holder, COLOR.innerBorder, 1.2, 0)
 	local Accent = New("Frame", {
 		Visible = false,
 		Position = UDim2.new(0, 8, 0, 6),
@@ -2541,16 +2656,16 @@ local function Safe(fn, ...)
 end
 
 local function RowBase(parent, title, desc, icon, reserve, class)
-	local h = 38
+	local h = 30
 	local Holder, S, Accent = CardBase(parent, h, class)
 	local rightPad = 18 + (reserve or 12)
 
 	local Title = Txt(Holder, {
-		Position = UDim2.new(0, 16, 0, 0),
+		Position = UDim2.new(0, 12, 0, 0),
 		Size = UDim2.new(1, -rightPad, 0, h),
 		Text = title,
 		Font = Enum.Font.GothamBold,
-		TextSize = 12,
+		TextSize = 11,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		ZIndex = 60,
 	})
@@ -2562,13 +2677,13 @@ local function Button(parent, text, callback, danger, desc, icon)
 	local Btn, S, Accent, Title = RowBase(parent, text, desc, icon, 34, "TextButton")
 	local function applySize()
 		if Settings.CompactButtons then
-			Btn.Size = UDim2.new(0.55, 0, 0, 30)
-			Title.Size = UDim2.new(1, -48, 1, 0)
-			Title.TextSize = 11
+			Btn.Size = UDim2.new(0.55, 0, 0, 26)
+			Title.Size = UDim2.new(1, -16, 1, 0)
+			Title.TextSize = 10
 		else
-			Btn.Size = UDim2.new(1, 0, 0, 38)
-			Title.Size = UDim2.new(1, -52, 0, 38)
-			Title.TextSize = 12
+			Btn.Size = UDim2.new(1, 0, 0, 30)
+			Title.Size = UDim2.new(1, -16, 0, 30)
+			Title.TextSize = 11
 		end
 	end
 	applySize()
@@ -2578,24 +2693,25 @@ local function Button(parent, text, callback, danger, desc, icon)
 	end
 
 	local Badge = MakeArrowBadge(Btn, {
-		Size = 22,
+		Size = 18,
 		Z = 60,
-		Position = UDim2.new(1, -24, 0.5, 0),
+		Position = UDim2.new(1, -18, 0.5, 0),
 		Danger = danger,
 		AccentIdle = true,
 	})
 	Badge.SetRotation(-90, true)
+	Badge.Frame.Visible = false
 
 	local hover = false
 	local function paint()
 		Tween(Btn, 0.15, { BackgroundColor3 = hover and COLOR.innerBgHover or COLOR.innerBg })
 		Tween(S, 0.15, {
 			Color = danger and COLOR.bad or (hover and COLOR.innerBorderHover or COLOR.innerBorder),
-			Thickness = hover and 1.8 or 1.5,
+			Thickness = hover and 1.3 or 1,
 		})
 		Badge.Paint(false, hover)
 		Tween(Badge.Frame, 0.15, {
-			Position = hover and UDim2.new(1, -21, 0.5, 0) or UDim2.new(1, -24, 0.5, 0),
+			Position = hover and UDim2.new(1, -15, 0.5, 0) or UDim2.new(1, -18, 0.5, 0),
 		})
 	end
 	Hover(Btn, function(h)
@@ -2617,7 +2733,7 @@ local function Toggle(parent, text, enabled, callback, availableFn, desc, icon, 
 
 	local Note = Txt(Holder, {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -56, 0.5, 0),
+		Position = UDim2.new(1, -50, 0.5, 0),
 		Size = UDim2.fromOffset(64, 14),
 		Text = (availableFn and not availableFn()) and Tr("Not Available") or "",
 		TextSize = 9,
@@ -2634,26 +2750,26 @@ local function Toggle(parent, text, enabled, callback, availableFn, desc, icon, 
 
 	local Switch = New("TextButton", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0.5, 0),
-		Size = UDim2.fromOffset(38, 20),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(32, 16),
 		BackgroundColor3 = COLOR.switchOff,
 		BorderSizePixel = 0,
 		AutoButtonColor = false,
 		Text = "",
 		ZIndex = 70,
 	}, Holder)
-	Corner(Switch, 10)
+	Corner(Switch, 8)
 	local SwitchStroke = Stroke(Switch, COLOR.switchBorder, 1.4, 0)
 
 	local Knob = New("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 3, 0.5, 0),
-		Size = UDim2.fromOffset(14, 14),
+		Position = UDim2.new(0, 2, 0.5, 0),
+		Size = UDim2.fromOffset(12, 12),
 		BackgroundColor3 = Color3.fromRGB(215, 215, 220),
 		BorderSizePixel = 0,
 		ZIndex = 75,
 	}, Switch)
-	Corner(Knob, 7)
+	Corner(Knob, 6)
 
 	local Hit = New("TextButton", {
 		Size = UDim2.fromScale(1, 1),
@@ -2666,12 +2782,12 @@ local function Toggle(parent, text, enabled, callback, availableFn, desc, icon, 
 		Tween(Holder, 0.15, { BackgroundColor3 = (hover and not state) and COLOR.innerBgHover or COLOR.innerBg })
 		Tween(HolderStroke, 0.18, {
 			Color = state and COLOR.red or (hover and COLOR.redBright or COLOR.innerBorder),
-			Thickness = (state or hover) and 1.7 or 1.5,
+			Thickness = (state or hover) and 1.3 or 1,
 		})
 		Tween(Switch, 0.18, { BackgroundColor3 = state and COLOR.red or COLOR.switchOff })
 		Tween(SwitchStroke, 0.18, { Color = state and COLOR.redBright or COLOR.switchBorder })
 		Tween(Knob, 0.18, {
-			Position = state and UDim2.new(1, -17, 0.5, 0) or UDim2.new(0, 3, 0.5, 0),
+			Position = state and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
 			BackgroundColor3 = state and Color3.new(1, 1, 1) or Color3.fromRGB(215, 215, 220),
 		})
 	end
@@ -2722,18 +2838,18 @@ local function Toggle(parent, text, enabled, callback, availableFn, desc, icon, 
 end
 
 local function Slider(parent, text, min, max, default, decimals, onChange, releaseOnly, desc, icon, key)
-	local TRACK_W = 84
+	local TRACK_W = 72
 	local Row, RowStroke = RowBase(parent, text, desc, icon, TRACK_W + 70)
 
 	local ValueBox = New("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -(14 + TRACK_W + 12), 0.5, 0),
-		Size = UDim2.fromOffset(42, 22),
+		Position = UDim2.new(1, -(10 + TRACK_W + 10), 0.5, 0),
+		Size = UDim2.fromOffset(36, 18),
 		BackgroundColor3 = COLOR.black,
 		BorderSizePixel = 0,
 		ZIndex = 60,
 	}, Row)
-	Corner(ValueBox, 7)
+	Corner(ValueBox, 6)
 	local ValueStroke = Stroke(ValueBox, COLOR.innerBorder, 1.2, 0.1)
 	local ValueLabel = New("TextBox", {
 		Size = UDim2.fromScale(1, 1),
@@ -2741,7 +2857,7 @@ local function Slider(parent, text, min, max, default, decimals, onChange, relea
 		BorderSizePixel = 0,
 		Text = "",
 		Font = Enum.Font.GothamBold,
-		TextSize = 12,
+		TextSize = 11,
 		TextColor3 = COLOR.redSoft,
 		ClearTextOnFocus = false,
 		TextXAlignment = Enum.TextXAlignment.Center,
@@ -2750,8 +2866,8 @@ local function Slider(parent, text, min, max, default, decimals, onChange, relea
 
 	local Track = New("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0.5, 0),
-		Size = UDim2.fromOffset(TRACK_W, 5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(TRACK_W, 4),
 		BackgroundColor3 = COLOR.switchOff,
 		BorderSizePixel = 0,
 		ZIndex = 60,
@@ -2767,18 +2883,18 @@ local function Slider(parent, text, min, max, default, decimals, onChange, relea
 	local Knob = New("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0, 0.5),
-		Size = UDim2.fromOffset(14, 14),
+		Size = UDim2.fromOffset(12, 12),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
 		ZIndex = 65,
 	}, Track)
-	Corner(Knob, 7)
+	Corner(Knob, 6)
 	local KnobStroke = Stroke(Knob, COLOR.red, 2, 0)
 
 	local Hit = New("TextButton", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -6, 0.5, 0),
-		Size = UDim2.fromOffset(TRACK_W + 16, 34),
+		Position = UDim2.new(1, -2, 0.5, 0),
+		Size = UDim2.fromOffset(TRACK_W + 16, 26),
 		BackgroundTransparency = 1,
 		Text = "",
 		ZIndex = 70,
@@ -2908,7 +3024,7 @@ local function Dropdown(parent, text, opts)
 	local multi = opts.Multi == true
 	local open, hover = false, false
 	local selected = multi and {} or nil
-	local PILL_W = 124
+	local PILL_W = 108
 
 	local Wrap = New("Frame", {
 		Size = UDim2.new(1, 0, 0, 0),
@@ -2923,7 +3039,7 @@ local function Dropdown(parent, text, opts)
 	local Pill = New("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(PILL_W, 26),
+		Size = UDim2.fromOffset(PILL_W, 22),
 		BackgroundColor3 = COLOR.black,
 		BorderSizePixel = 0,
 		ZIndex = 60,
@@ -2935,7 +3051,7 @@ local function Dropdown(parent, text, opts)
 		Position = UDim2.new(0, 10, 0, 0),
 		Size = UDim2.new(1, -34, 1, 0),
 		Font = Enum.Font.GothamMedium,
-		TextSize = 11,
+		TextSize = 10,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		ZIndex = 62,
 	})
@@ -3009,7 +3125,7 @@ local function Dropdown(parent, text, opts)
 		Tween(Head, 0.15, { BackgroundColor3 = (hover or open) and COLOR.innerBgHover or COLOR.innerBg })
 		Tween(HeadStroke, 0.15, {
 			Color = open and COLOR.red or (hover and COLOR.innerBorderHover or COLOR.innerBorder),
-			Thickness = (open or hover) and 1.7 or 1.5,
+			Thickness = (open or hover) and 1.3 or 1,
 		})
 		Tween(PillStroke, 0.15, { Color = open and COLOR.redBright or COLOR.innerBorder })
 		Badge.SetRotation(open and 180 or 0)
@@ -3156,7 +3272,7 @@ local function TextInput(parent, text, opts)
 	local Pill = New("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(PILL_W, 26),
+		Size = UDim2.fromOffset(PILL_W, 22),
 		BackgroundColor3 = COLOR.black,
 		BorderSizePixel = 0,
 		ZIndex = 60,
@@ -3722,7 +3838,7 @@ local function ImageBox(parent, text, opts)
 	local Pill = New("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(PILL_W, 30),
+		Size = UDim2.fromOffset(PILL_W, 26),
 		BackgroundColor3 = COLOR.black,
 		BorderSizePixel = 0,
 		ZIndex = 60,
@@ -3742,7 +3858,7 @@ local function ImageBox(parent, text, opts)
 		Position = UDim2.new(0, 10, 0, 0),
 		Size = UDim2.new(1, -34, 1, 0),
 		Font = Enum.Font.GothamMedium,
-		TextSize = 11,
+		TextSize = 10,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		ZIndex = 62,
 	})
@@ -3798,7 +3914,7 @@ local function ImageBox(parent, text, opts)
 		Tween(Head, 0.15, { BackgroundColor3 = (hover or open) and COLOR.innerBgHover or COLOR.innerBg })
 		Tween(HeadStroke, 0.15, {
 			Color = open and COLOR.red or (hover and COLOR.innerBorderHover or COLOR.innerBorder),
-			Thickness = (open or hover) and 1.7 or 1.5,
+			Thickness = (open or hover) and 1.3 or 1,
 		})
 		Tween(PillStroke, 0.15, { Color = open and COLOR.redBright or COLOR.innerBorder })
 		Badge.SetRotation(open and 180 or 0)
@@ -4131,257 +4247,6 @@ end
 
 local CARD_SHADE = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(200, 200, 212))
 
-do
-	local Page = CreatePage("Overview")
-	CreateTab("Overview", "11761637751")
-
-	Section(Page, "Overview")
-
-	local Card = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = COLOR.innerBg,
-		BorderSizePixel = 0,
-		LayoutOrder = ord(Page),
-		ZIndex = 50,
-	}, Page)
-	Corner(Card, 14)
-	Gradient(Card, CARD_SHADE, 0)
-	local CardStroke = Stroke(Card, Color3.new(1, 1, 1), 1.6, 0.15)
-	local CardStrokeGrad = Gradient(CardStroke, NeonSequence, 0)
-	Spin(CardStrokeGrad, 9, 2, Page)
-
-	New("UIPadding", {
-		PaddingLeft = UDim.new(0, 14),
-		PaddingRight = UDim.new(0, 14),
-		PaddingTop = UDim.new(0, 14),
-		PaddingBottom = UDim.new(0, 14),
-	}, Card)
-	New("UIListLayout", { Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, Card)
-
-	local HeaderRow = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 64),
-		BackgroundTransparency = 1,
-		LayoutOrder = 1,
-	}, Card)
-
-	local Avatar = New("ImageLabel", {
-		Size = UDim2.fromOffset(64, 64),
-		BackgroundColor3 = COLOR.black,
-		BorderSizePixel = 0,
-		ZIndex = 55,
-	}, HeaderRow)
-	Corner(Avatar, 32)
-	local AvatarStroke = Stroke(Avatar, Color3.new(1, 1, 1), 2.2, 0)
-	local AvatarGrad = Gradient(AvatarStroke, NeonSequence, 0)
-	Spin(AvatarGrad, 6, 2, Page)
-
-	Txt(HeaderRow, {
-		Position = UDim2.new(0, 78, 0, 2),
-		Size = UDim2.new(1, -160, 0, 22),
-		Text = LocalPlayer.DisplayName,
-		Font = Enum.Font.GothamBold,
-		TextSize = 16,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		ZIndex = 55,
-	})
-	Txt(HeaderRow, {
-		Position = UDim2.new(0, 78, 0, 25),
-		Size = UDim2.new(1, -160, 0, 16),
-		Text = "@" .. LocalPlayer.Name,
-		TextColor3 = COLOR.grey,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		ZIndex = 55,
-	})
-	local AgeLabel = Txt(HeaderRow, {
-		Position = UDim2.new(0, 78, 0, 45),
-		Size = UDim2.new(1, -160, 0, 14),
-		Text = TrF("Account Age: %d days", LocalPlayer.AccountAge),
-		TextSize = 10,
-		TextColor3 = COLOR.grey,
-		ZIndex = 55,
-	})
-	Lang.OnChange(function()
-		AgeLabel.Text = TrF("Account Age: %d days", LocalPlayer.AccountAge)
-	end)
-
-	local Badge = New("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, 0, 0.5, 0),
-		Size = UDim2.fromOffset(78, 22),
-		BackgroundColor3 = Color3.fromRGB(15, 35, 20),
-		BorderSizePixel = 0,
-		ZIndex = 55,
-	}, HeaderRow)
-	Corner(Badge, 11)
-	Stroke(Badge, Color3.fromRGB(60, 160, 80), 1, 0.2)
-	local BadgeInner = New("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		ZIndex = 58,
-	}, Badge)
-	New("UIListLayout", {
-		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Center,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0, 6),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, BadgeInner)
-	local BadgeDot = New("Frame", {
-		Size = UDim2.fromOffset(6, 6),
-		BackgroundColor3 = COLOR.good,
-		BorderSizePixel = 0,
-		LayoutOrder = 1,
-		ZIndex = 60,
-	}, BadgeInner)
-	Corner(BadgeDot, 6)
-	Txt(BadgeInner, {
-		AutomaticSize = Enum.AutomaticSize.X,
-		Size = UDim2.new(0, 0, 1, 0),
-		Text = "ONLINE",
-		Font = Enum.Font.GothamBold,
-		TextSize = 9,
-		TextColor3 = COLOR.good,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		LayoutOrder = 2,
-		ZIndex = 60,
-	})
-
-	task.spawn(function()
-		local ok, content = pcall(function()
-			return Players:GetUserThumbnailAsync(
-				LocalPlayer.UserId,
-				Enum.ThumbnailType.HeadShot,
-				Enum.ThumbnailSize.Size180x180
-			)
-		end)
-		if ok and Avatar.Parent then
-			Avatar.Image = content
-		end
-	end)
-
-	local Tiles = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 56),
-		BackgroundTransparency = 1,
-		LayoutOrder = 2,
-	}, Card)
-	New("UIListLayout", {
-		FillDirection = Enum.FillDirection.Horizontal,
-		Padding = UDim.new(0, 8),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, Tiles)
-
-	local function Tile(label, order)
-		local T = New("Frame", {
-			Size = UDim2.new(1 / 3, -6, 1, 0),
-			BackgroundColor3 = COLOR.innerBg,
-			BorderSizePixel = 0,
-			LayoutOrder = order,
-			ZIndex = 55,
-		}, Tiles)
-		Corner(T, 10)
-		Gradient(T, CARD_SHADE, 90)
-		local S = Stroke(T, COLOR.innerBorder, 1.2, 0.1)
-		local Bar = New("Frame", {
-			Visible = false,
-			AnchorPoint = Vector2.new(0.5, 0),
-			Position = UDim2.new(0.5, 0, 0, 0),
-			Size = UDim2.fromOffset(22, 2),
-			BackgroundColor3 = COLOR.red,
-			BorderSizePixel = 0,
-			ZIndex = 60,
-		}, T)
-		Corner(Bar, 2)
-		local V = Txt(T, {
-			Position = UDim2.new(0, 0, 0, 9),
-			Size = UDim2.new(1, 0, 0, 24),
-			Text = "-",
-			Font = Enum.Font.GothamBold,
-			TextSize = 17,
-			TextXAlignment = Enum.TextXAlignment.Center,
-			ZIndex = 60,
-		})
-		Txt(T, {
-			Position = UDim2.new(0, 0, 0, 33),
-			Size = UDim2.new(1, 0, 0, 14),
-			Text = string.upper(label),
-			Font = Enum.Font.GothamMedium,
-			TextSize = 9,
-			TextColor3 = COLOR.grey,
-			TextXAlignment = Enum.TextXAlignment.Center,
-			ZIndex = 60,
-		})
-		OnTheme(function()
-			T.BackgroundColor3 = COLOR.innerBg
-			S.Color = COLOR.innerBorder
-			Bar.BackgroundColor3 = COLOR.red
-			V.TextColor3 = COLOR.redSoft
-		end)
-		return V
-	end
-
-	local PlayersValue = Tile("Players", 1)
-	local PingValue = Tile("Ping", 2)
-	local FpsValue = Tile("FPS", 3)
-
-	local Divider = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = COLOR.border,
-		BackgroundTransparency = 0.4,
-		BorderSizePixel = 0,
-		LayoutOrder = 3,
-	}, Card)
-
-	local StatsHolder = New("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		LayoutOrder = 4,
-	}, Card)
-	New("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, StatsHolder)
-
-	local GameValue = StatRow(StatsHolder, "Game")
-	local PlaceValue = StatRow(StatsHolder, "Place ID")
-	local ServerValue = StatRow(StatsHolder, "Server")
-
-	GameValue.Text = Context.GameName or game.Name
-	PlaceValue.Text = tostring(game.PlaceId)
-	ServerValue.Text = (game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Studio")
-
-	if not Context.GameName then
-		task.spawn(function()
-			local ok, info = pcall(function()
-				return MarketplaceService:GetProductInfo(game.PlaceId)
-			end)
-			if ok and type(info) == "table" and info.Name and GameValue.Parent then
-				GameValue.Text = info.Name
-			end
-		end)
-	end
-
-	OnTheme(function()
-		CardStroke.Color = Color3.new(1, 1, 1)
-		CardStrokeGrad.Color = NeonSequence
-		AvatarStroke.Color = Color3.new(1, 1, 1)
-		AvatarGrad.Color = NeonSequence
-		Card.BackgroundColor3 = COLOR.innerBg
-		Divider.BackgroundColor3 = COLOR.border
-	end)
-
-	local function updatePlayers()
-		PlayersValue.Text = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
-	end
-	updatePlayers()
-
-	Telemetry.Add(function(fps, ping)
-		FpsValue.Text = tostring(fps)
-		PingValue.Text = ping and (ping .. "ms") or "N/A"
-		updatePlayers()
-	end, function()
-		return Root.Visible and Page.Visible
-	end)
-end
-
 local UI = {
 
 	Lang = Lang, Config = Config, Assets = Assets, COLOR = COLOR, Gui = Gui,
@@ -4428,6 +4293,28 @@ function UI.TextInputCb(parent, text, default, placeholder, callback, desc)
 		end,
 	})
 	return Holder, ctl
+end
+
+local TestPage
+-- Optional experiment tab: nothing is created unless UI.Test(...) is called.
+function UI.Test(build)
+	local prev = CurrentPage
+	if not TestPage then
+		TestPage = CreatePage("Test")
+		CreateTab("Test", "eye")
+	end
+	CurrentPage = "Test"
+	if type(build) == "function" then
+		local ok, err = pcall(build, TestPage)
+		if not ok then
+			warn("[LUNAR Hub] Test page failed: " .. tostring(err))
+		end
+	end
+	CurrentPage = prev
+	if Actions.CardsReady then
+		Actions.Cardify(TestPage)
+	end
+	return TestPage
 end
 
 for index, system in ipairs(Context.Systems or {}) do
@@ -4493,12 +4380,18 @@ do
 	ctl.bg = Slider(Page, "Background Opacity", 0, 100, Settings.BgOpacity, 0, function(v)
 		Settings.BgOpacity = v
 		BgImage.ImageTransparency = 1 - v / 100
+		BgImage.Visible = v > 0 and Assets.Ready.Background ~= nil
 		Custom.SaveSoon()
 	end)
-	_, ctl.groupframe = Toggle(Page, "Group Frame", Settings.GroupFrame, function(on)
-		Settings.GroupFrame = on
-		Custom.Refresh("Groups")
-		saveSettings()
+	ctl.ptrans = Slider(Page, "Panel Transparency", 0, 90, Settings.PanelTransparency, 0, function(v)
+		Settings.PanelTransparency = v
+		Actions.ApplyTransparency()
+		Custom.SaveSoon()
+	end)
+	ctl.blur = Slider(Page, "Background Blur", 0, 24, Settings.Blur, 0, function(v)
+		Settings.Blur = v
+		Actions.ApplyBlur()
+		Custom.SaveSoon()
 	end)
 	local btnDrop
 	_, btnDrop = Dropdown(Page, "Button Size", {
@@ -4510,16 +4403,6 @@ do
 			saveSettings()
 		end,
 	})
-	ctl.gap = Slider(Page, "Section Spacing", 0, 30, Settings.SectionGap, 0, function(v)
-		Settings.SectionGap = v
-		Custom.Refresh("Sections")
-		Custom.SaveSoon()
-	end)
-	ctl.fade = Slider(Page, "Category Opacity", 0, 100, Settings.SectionFade, 0, function(v)
-		Settings.SectionFade = v
-		Custom.Refresh("Sections")
-		Custom.SaveSoon()
-	end)
 
 	Section(Page, "Monitor")
 	_, ctl.monitor = Toggle(Page, "FPS / Ping Monitor", Settings.FloatMonitor, function(on)
@@ -5188,10 +5071,12 @@ do
 		Settings = copyTable(DEFAULT_SETTINGS)
 		ctl.bg.Set(Settings.BgOpacity, true)
 		BgImage.ImageTransparency = 1 - Settings.BgOpacity / 100
-		ctl.groupframe.Set(Settings.GroupFrame, true)
+		BgImage.Visible = false
+		ctl.ptrans.Set(Settings.PanelTransparency, true)
+		ctl.blur.Set(Settings.Blur, true)
+		Actions.ApplyTransparency()
+		Actions.ApplyBlur()
 		btnDrop.Set("Normal", true)
-		ctl.gap.Set(Settings.SectionGap, true)
-		ctl.fade.Set(Settings.SectionFade, true)
 		Custom.Refresh("Buttons")
 		Custom.Refresh("Sections")
 		Custom.Refresh("Groups")
@@ -5301,8 +5186,8 @@ do
 	end)
 end
 
--- ===== card layout: every section becomes a rounded card, cards flow into two columns =====
-local function BuildColumns(Page)
+-- ===== card layout: every section becomes a rounded card (single column) =====
+local function BuildCards(Page)
 	local kids = {}
 	for _, c in ipairs(Page:GetChildren()) do
 		if c:IsA("GuiObject") then
@@ -5333,97 +5218,46 @@ local function BuildColumns(Page)
 		table.insert(cur.items, c)
 	end
 
-	local Row = New("Frame", {
-		Name = "Columns",
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		LayoutOrder = 1,
-	}, Page)
-	local function Column(pos)
-		local col = New("Frame", {
-			Position = pos,
-			Size = UDim2.new(0.5, -5, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-		}, Row)
-		New("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, col)
-		return col
-	end
-	local ColL = Column(UDim2.new(0, 0, 0, 0))
-	local ColR = Column(UDim2.new(0.5, 5, 0, 0))
-
-	local placed = {}
 	for _, g in ipairs(groups) do
-		local h = 0
-		for _, it in ipairs(g.items) do
-			local oy = it.Size.Y.Offset
-			h += (oy > 0 and oy or 34) + 6
-		end
-		local inst
 		if g.card then
-			inst = New("Frame", {
+			local card = New("Frame", {
 				Name = "Card",
 				Size = UDim2.new(1, 0, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y,
 				BackgroundColor3 = COLOR.tab,
 				BorderSizePixel = 0,
+				LayoutOrder = g.items[1].LayoutOrder,
 			}, nil)
-			Corner(inst, 14)
-			Stroke(inst, COLOR.border, 1, 0)
+			Corner(card, 12)
+			Stroke(card, COLOR.border, 1, 0)
 			New("UIPadding", {
-				PaddingLeft = UDim.new(0, 10),
-				PaddingRight = UDim.new(0, 10),
-				PaddingTop = UDim.new(0, 8),
-				PaddingBottom = UDim.new(0, 10),
-			}, inst)
-			New("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, inst)
+				PaddingLeft = UDim.new(0, 8),
+				PaddingRight = UDim.new(0, 8),
+				PaddingTop = UDim.new(0, 6),
+				PaddingBottom = UDim.new(0, 8),
+			}, card)
+			New("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, card)
 			for _, it in ipairs(g.items) do
-				it.Parent = inst
+				it.Parent = card
 			end
-			h += 20
-		else
-			inst = g.items[1]
-		end
-		table.insert(placed, { inst = inst, h = h })
-	end
-
-	local lastCols
-	local function place()
-		local cols = PanelSize.X >= 520 and 2 or 1
-		if cols == lastCols then
-			return
-		end
-		lastCols = cols
-		ColR.Visible = cols == 2
-		ColL.Size = cols == 2 and UDim2.new(0.5, -5, 0, 0) or UDim2.new(1, 0, 0, 0)
-		local hL, hR = 0, 0
-		for i, p in ipairs(placed) do
-			p.inst.LayoutOrder = i
-			if cols == 2 and hR < hL then
-				p.inst.Parent = ColR
-				hR += p.h
-			else
-				p.inst.Parent = ColL
-				hL += p.h
-			end
+			card.Parent = Page
+			CardFrames[card] = true
 		end
 	end
-	table.insert(ColumnPages, place)
-	place()
+	Actions.ApplyTransparency()
 end
+Actions.Cardify = BuildCards
 
 for pageName, Page in pairs(Pages) do
-	local ok, err = pcall(BuildColumns, Page)
+	local ok, err = pcall(BuildCards, Page)
 	if not ok then
-		warn("[LUNAR Hub] column layout failed for " .. tostring(pageName) .. ": " .. tostring(err))
+		warn("[LUNAR Hub] card layout failed for " .. tostring(pageName) .. ": " .. tostring(err))
 	end
 end
+Actions.CardsReady = true
 
 Actions.ApplyLayout()
-Actions.ActivateTab("Overview")
+Actions.ActivateTab(TabOrder[1])
 
 local function Draggable(handle, opts)
 	local dragging, moved = false, false
@@ -5519,15 +5353,14 @@ local ToggleButton = New("TextButton", {
 	Text = "",
 	ZIndex = 10,
 }, ToggleRoot)
-Corner(ToggleButton, 25)
-ToggleButton.BackgroundColor3 = COLOR.red
-for _, l in ipairs(ToggleGlow) do
-	l.Frame.Visible = false
-end
+Corner(ToggleButton, 16)
+Gradient(ToggleButton, ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 26, 42)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 10, 16)),
+}), 90)
 
-local ToggleStroke = Stroke(ToggleButton, Color3.new(1, 1, 1), 0, 0)
+local ToggleStroke = Stroke(ToggleButton, Color3.new(1, 1, 1), 2, 0)
 local ToggleStrokeGrad = Gradient(ToggleStroke, NeonSequence, 0)
-ToggleStrokeGrad.Enabled = false
 Spin(ToggleStrokeGrad, 4, 1, "toggle")
 
 local ToggleLabel = New("TextLabel", {
@@ -5583,7 +5416,7 @@ local FLogo = New("ImageLabel", {
 	Visible = false,
 	ZIndex = 11,
 }, ToggleButton)
-Corner(FLogo, 25)
+Corner(FLogo, 16)
 Assets.On("Logo", function(id)
 	if FLogo.Parent then
 		FLogo.Image = id
@@ -5605,9 +5438,9 @@ Corner(ToggleBar, 2)
 local ToggleBarGrad = Gradient(ToggleBar, ColorSequence.new(COLOR.red), 0)
 
 local PanelVisible = true
+Actions.PanelOpen = true
 
 OnTheme(function()
-	ToggleButton.BackgroundColor3 = COLOR.red
 	ToggleStroke.Color = Color3.new(1, 1, 1)
 	ToggleStrokeGrad.Color = NeonSequence
 	ToggleLabelStroke.Color = COLOR.neon
@@ -5634,11 +5467,11 @@ end
 
 track(ToggleButton.MouseEnter:Connect(function()
 	Tween(ToggleRoot, 0.18, { Size = UDim2.fromOffset(TOGGLE + 6, TOGGLE + 6) })
-	Tween(ToggleStroke, 0.18, { Thickness = 2 })
+	Tween(ToggleStroke, 0.18, { Thickness = 2.6 })
 end))
 track(ToggleButton.MouseLeave:Connect(function()
 	Tween(ToggleRoot, 0.18, { Size = UDim2.fromOffset(TOGGLE, TOGGLE) })
-	Tween(ToggleStroke, 0.18, { Thickness = 0 })
+	Tween(ToggleStroke, 0.18, { Thickness = 2 })
 end))
 
 function Actions.RefreshFloating()
@@ -5658,11 +5491,13 @@ end
 
 local function OpenPanel()
 	PanelVisible = true
+	Actions.PanelOpen = true
 	Animating = true
 	AnimToken += 1
 	local token = AnimToken
 	Actions.RefreshFloating()
 	Root.Visible = true
+	Actions.ApplyBlur()
 	Actions.UpdateAnim()
 	Root.Size = UDim2.fromOffset(PanelSize.X - POP, PanelSize.Y - POP)
 	Root.Position = UDim2.fromOffset(PanelPos.X + POP / 2, PanelPos.Y + POP / 2)
@@ -5682,10 +5517,12 @@ end
 local function ClosePanel()
 	Picker.Close()
 	PanelVisible = false
+	Actions.PanelOpen = false
 	Animating = true
 	AnimToken += 1
 	local token = AnimToken
 	Actions.RefreshFloating()
+	Actions.ApplyBlur()
 	Tween(Root, 0.2, {
 		Size = UDim2.fromOffset(PanelSize.X - POP, PanelSize.Y - POP),
 		Position = UDim2.fromOffset(PanelPos.X + POP / 2, PanelPos.Y + POP / 2),
@@ -6041,7 +5878,9 @@ end
 Actions.ApplyLayout()
 Actions.Refit()
 Actions.RefreshFloating()
-Actions.ActivateTab("Overview")
+Actions.ApplyTransparency()
+Actions.ApplyBlur()
+Actions.ActivateTab(TabOrder[1])
 
 Assets.Load()
 Actions.SetAntiAfk(Settings.AntiAFK)
