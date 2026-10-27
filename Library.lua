@@ -1,23 +1,3 @@
---[[ LUNAR Library v3.1.0 (library mode: loading this file does NOT create any UI)
-Usage:
-	local Lunar = loadstring(readfile("LunarHub_library.lua"))()
-	local Hub = Lunar.new({
-		Id = "MyGame",            -- config/settings file id (default: PlaceId)
-		GameName = "My Game",     -- shown in Overview (default: game.Name)
-		Translations = nil,       -- optional extra translations
-		ConfigExclude = {},       -- optional patterns excluded from config
-		Systems = {               -- each system builds its own page(s)
-			{ Name = "Example", Build = function(UI)
-				local Page = UI.CreatePage("Example")
-				UI.CreateTab("Example", "info")
-				UI.Section(Page, "Main")
-				UI.Toggle(Page, "Enabled", false, function(on) end)
-				UI.Button(Page, "Run", function() end)
-			end },
-		},
-	})
-	-- Hub.Notify, Hub.UI, Hub.Gui, Hub.Destroy()
-]]
 local Lunar = { Version = "3.1.0" }
 
 local function Build(Context)
