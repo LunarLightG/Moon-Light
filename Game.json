@@ -1,1 +1,17 @@
-
+{
+	"Base": "https://raw.githubusercontent.com/LunarLightG/Moon-Light/refs/heads/main/",
+	"Games": [
+		{
+			"Name": "Break And Steal An Egg",
+			"PlaceIds": [10765288803],
+			"UniverseIds": [10765288803],
+			"Script": "Script/BreakAndStealAnEgg.lua"
+		},
+		{
+			"Name": "Anime Eyes",
+			"PlaceIds": [97617452700163],
+			"UniverseIds": [10770933473],
+			"Script": "Script/AnimeEyes.lua"
+		}
+	]
+}
