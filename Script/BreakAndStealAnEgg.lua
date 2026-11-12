@@ -1105,8 +1105,64 @@ local FarmSystem = {
 	local DIVINE_POS = Vector3.new(-1565.5, 3.693, 0)
 	local DIVINE_X = { -1819.5, -1311.5 }
 
-	-- true when a chosen zone is beyond the Divine zone and we are not in the Divine zone yet.
-	-- Only asked when NO egg of the chosen zones is in sight.
+	-- zones where each egg rarity spawns (from the game dump)
+	local RARITY_ZONES = {
+		Common = { 1 }, Uncommon = { 2 }, Rare = { 3 }, Epic = { 4 }, Legendary = { 5 }, Mythic = { 6 },
+		Divine = { 7 }, Cosmic = { 8 }, Secret = { 9 }, Celestial = { 10 }, Inferno = { 7, 11 },
+		Void = { 7, 12 }, Omega = { 7, 12, 13 }, Spectral = { 12, 13 }, Ethereal = { 13 },
+	}
+
+	-- true when the far zones (beyond the Divine zone) that can hold the chosen rarities are loaded, i.e. their
+	-- Eggs folder exists AND already has eggs in it. A far zone that is not streamed in has no folder / no eggs.
+	local function swFarMapLoaded()
+		local build = Workspace:FindFirstChild("Build")
+		local zb = build and build:FindFirstChild("ZoneBuilds")
+		if not zb then
+			return false
+		end
+		local chosen = {}
+		if next(SW.Zone) == nil then
+			for z = DIVINE_ZONE + 1, 13 do
+				chosen[z] = true
+			end
+		else
+			for z in pairs(SW.Zone) do
+				if z > DIVINE_ZONE then
+					chosen[z] = true
+				end
+			end
+		end
+		-- keep only the zones where a chosen rarity really spawns
+		local need = {}
+		for rar, on in pairs(SW.Rarity) do
+			if on then
+				local zs = RARITY_ZONES[rar]
+				if zs then
+					for _, z in ipairs(zs) do
+						if chosen[z] then
+							need[z] = true
+						end
+					end
+				else
+					for z in pairs(chosen) do
+						need[z] = true
+					end
+				end
+			end
+		end
+		for z in pairs(need) do
+			local zf = zb:FindFirstChild("Zone" .. z)
+			local eggs = zf and zf:FindFirstChild("Eggs")
+			if not (eggs and #eggs:GetChildren() > 0) then
+				return false
+			end
+		end
+		return true
+	end
+
+	-- true when a chosen zone is beyond the Divine zone, its map is NOT loaded and we are not in the Divine zone yet.
+	-- Only asked when NO egg of the chosen zones is in sight. If the map is loaded (or a far egg is in sight) we never
+	-- go to the Divine zone.
 	local function swNeedDivineStop()
 		local far = false
 		for z in pairs(SW.Zone) do
@@ -1118,7 +1174,7 @@ local FarmSystem = {
 		if next(SW.Zone) == nil then
 			far = true
 		end
-		if not far then
+		if not far or swFarMapLoaded() then
 			return false
 		end
 		local r = getHRP()
@@ -1234,7 +1290,7 @@ local FarmSystem = {
 				if not e and swNeedDivineStop() then
 					SW.Working = true
 					TMX.Exit()
-					setSwStatus("No chosen egg in sight -> going to the Divine zone first")
+					setSwStatus("The map of the chosen zone is not loaded -> going to the Divine zone first")
 					swGoTo(DIVINE_POS, id)
 					SW.DivineAt = os.clock() + 4
 					task.wait(0.5)
@@ -3096,7 +3152,7 @@ local FarmSystem = {
 			end
 			return Tr("Zone") .. " " .. table.concat(parts, ", ")
 		end,
-		Desc = "Only break eggs in the chosen zones (none chosen = all zones). If a chosen zone is beyond the Divine zone (7) and none of the chosen eggs is in sight, Auto Break goes to the Divine zone first",
+		Desc = "Only break eggs in the chosen zones (none chosen = all zones). If a chosen zone is beyond the Divine zone (7), none of its eggs is in sight and its map is not loaded, Auto Break goes to the Divine zone first",
 		OnChange = function(chosen)
 			SW.Zone = {}
 			for _, n in ipairs(chosen) do
@@ -5020,8 +5076,8 @@ local TRANSLATIONS = {
 	{ en = "Nearest first", th = "ไข่ที่อยู่ใกล้ที่สุดก่อน" },
 	{ en = "Animal Mutation", th = "กลายพันธุ์สัตว์" },
 	{ en = "Egg Zone", th = "โซนไข่" },
-	{ en = "Only break eggs in the chosen zones (none chosen = all zones). If a chosen zone is beyond the Divine zone (7) and none of the chosen eggs is in sight, Auto Break goes to the Divine zone first", th = "ทุบเฉพาะไข่ในโซนที่เลือก (ไม่เลือก = ทุกโซน) ถ้าโซนที่เลือกอยู่เลยโซน Divine (7) และมองไม่เห็นไข่ที่เลือกเลย Auto Break จะไปโซน Divine ก่อน" },
-	{ en = "No chosen egg in sight -> going to the Divine zone first", th = "มองไม่เห็นไข่ที่เลือก -> ไปโซน Divine ก่อน" },
+	{ en = "Only break eggs in the chosen zones (none chosen = all zones). If a chosen zone is beyond the Divine zone (7), none of its eggs is in sight and its map is not loaded, Auto Break goes to the Divine zone first", th = "ทุบเฉพาะไข่ในโซนที่เลือก (ไม่เลือก = ทุกโซน) ถ้าโซนที่เลือกอยู่เลยโซน Divine (7) มองไม่เห็นไข่ของโซนนั้นและแมพยังไม่โหลด Auto Break จะไปโซน Divine ก่อน" },
+	{ en = "The map of the chosen zone is not loaded -> going to the Divine zone first", th = "แมพของโซนที่เลือกยังไม่โหลด -> ไปโซน Divine ก่อน" },
 	{ en = "Animal Rarity", th = "ความหายากของสัตว์" },
 	{ en = "Min Income / s", th = "รายได้ขั้นต่ำ / วินาที" },
 	{ en = "Safe Zone First", th = "ไปโซนปลอดภัยก่อน" },
