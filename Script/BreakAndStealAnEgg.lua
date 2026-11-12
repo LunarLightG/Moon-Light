@@ -591,6 +591,7 @@ local FarmSystem = {
 	ST = {
 		Running = false, Busy = false, Working = false, Noclip = true, SafeWait = false, AntiRagdoll = true,
 		Speed = 100, Rarity = {}, Mutation = {}, Collected = 0, MinIncome = 0, Unread = 0, TpMode = true, TpArmed = false,
+		CE = { Running = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Zone1 = Vector3.new(-135.2, 3.693, -28.1), WalkSpeed = 300, FarZone = 4 },
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
@@ -609,7 +610,7 @@ local FarmSystem = {
 	end
 
 	local function breakBlocked()
-		return ST.Working or GM.Working or TT.Working or evBlock()
+		return ST.Working or ST.CE.Busy or GM.Working or TT.Working or evBlock()
 	end
 
 	local swToggle, stToggle
@@ -1381,7 +1382,7 @@ local FarmSystem = {
 	end
 
 	local function titanicBlocked()
-		return ST.Working or GM.Working or evBlock()
+		return ST.Working or ST.CE.Busy or GM.Working or evBlock()
 	end
 
 	local function fmtClock(sec)
@@ -1889,7 +1890,7 @@ local FarmSystem = {
 	end
 
 	function TM.Blocked()
-		return ST.Working or GM.Working or TT.Working or SW.Working or evBlock()
+		return ST.Working or ST.CE.Busy or GM.Working or TT.Working or SW.Working or evBlock()
 	end
 
 	TM.Leaving = false
@@ -3077,6 +3078,7 @@ local FarmSystem = {
 	Section(Page, "Auto Extras")
 	setTmStatus = StatusCard(Page, "Idle")
 	setEqStatus = StatusCard(Page, "Idle")
+	ST.CE.Say = StatusCard(Page, "Idle")
 	Toggle(Page, "Auto Treadmill", false, function(on)
 		if on then
 			TM.Start()
@@ -3092,6 +3094,19 @@ local FarmSystem = {
 			EQ.Stop()
 		end
 	end, nil, "Equips your best pets once after every successful steal, after a random 1 - 5 second delay")
+	Toggle(Page, "Auto Carry Escape", false, function(on)
+		if on then
+			if ST.CE.Start then
+				ST.CE.Start()
+			else
+				ST.CE.Want = true
+			end
+		elseif ST.CE.Stop then
+			ST.CE.Stop()
+		else
+			ST.CE.Want = false
+		end
+	end, nil, "Noclip all the time while ON. When you carry a new animal: if you are far from zone 1/2 you teleport to zone 1 first (guard hit), then TP Walk at speed 300 through the wall to the escape spot and stop there. Carrying the same animal again does nothing. Works behind Auto Steal")
 
 	Section(Page, "Auto Break")
 	setSwStatus = StatusCard(Page, "Idle")
@@ -4517,6 +4532,263 @@ local FarmSystem = {
 		return reached
 	end
 
+	-- ===== Auto Carry Escape =====
+	-- ON  : noclip all the time (every frame). For every NEW animal in our hands: close to zone 1/2 -> TP Walk (speed 300)
+	--       straight to the escape spot; far away -> guard hit + teleport to zone 1 first, then TP Walk. At the spot it
+	--       stops and we are free. Carrying the same animal again does nothing. Works behind Auto Steal.
+	-- OFF : noclip off (collisions restored), nothing else happens.
+	function ST.CE.Talk(t)
+		print("[Carry Escape] " .. tostring(t)) -- the status card is hidden, so also log to the console
+		if ST.CE.Say then
+			ST.CE.Say(t)
+		end
+	end
+
+	-- an animal of ours is in our hands: a carried animal part right next to the character
+	function ST.CE.Holding()
+		local f = Workspace:FindFirstChild("CarriedAnimals")
+		local hrp = getHRP()
+		if not f or not hrp then
+			return false
+		end
+		for _, d in ipairs(f:GetDescendants()) do
+			if d:IsA("BasePart") and (d.Position - hrp.Position).Magnitude <= 12 then
+				return true
+			end
+		end
+		return false
+	end
+
+	track(RunService.Stepped:Connect(function()
+		if not ST.CE.Running then
+			return
+		end
+		local c = LocalPlayer.Character
+		if not c then
+			return
+		end
+		for _, d in ipairs(c:GetDescendants()) do
+			if d:IsA("BasePart") then
+				if ST.CE.Orig[d] == nil then
+					ST.CE.Orig[d] = d.CanCollide
+				end
+				if d.CanCollide then
+					d.CanCollide = false
+				end
+			end
+		end
+	end))
+
+	function ST.CE.Restore()
+		for part, was in pairs(ST.CE.Orig) do
+			if part.Parent then
+				part.CanCollide = was
+			end
+		end
+		ST.CE.Orig = setmetatable({}, { __mode = "k" })
+	end
+
+	-- Runs once for every NEW animal in our hands, behind Auto Steal (never starts while Auto Steal is busy, stops as soon
+	-- as it starts working).
+	--  * 3 zones or less from the start: just TP Walk (through the wall, noclip) to the escape spot at WalkSpeed.
+	--  * FarZone or further: first teleport to zone 1 with Auto Steal's recipe (the guard of our zone hits us, the teleport
+	--    is armed, teleport to the dropped animal, pick it up, teleport to zone 1), then TP Walk to the escape spot.
+	-- At the escape spot it stops and gives the control back. Carrying the same animal again does nothing.
+	function ST.CE.Cycle(job)
+		local token = {}
+		local function alive()
+			return ST.CE.Running and ST.CE.Job == job and not (ST.Running and (ST.Busy or ST.Working))
+		end
+		if ST.Ext or not alive() then
+			return
+		end
+		local hrp = getHRP()
+		if not hrp then
+			return
+		end
+		local target = ST.CE.Pos
+		if flatDist(hrp.Position, target) <= 40 then
+			ST.CE.Talk("Already at the escape spot. You can move freely until you carry another animal")
+			return
+		end
+		local zone = zoneIdx(hrp.Position)
+		if zone < 1 then
+			zone = ST.PrimeZone(hrp.Position)
+		end
+		local far = zone ~= nil and zone >= ST.CE.FarZone
+		ST.CE.Busy = true
+		ST.Ext = { id = token, alive = alive, say = ST.CE.Talk }
+		local ok, err = pcall(function()
+			if far then
+				local pickBefore = {}
+				local pf0 = Workspace:FindFirstChild("AnimalPickups")
+				if pf0 then
+					for _, c in ipairs(pf0:GetChildren()) do
+						pickBefore[c] = true
+					end
+				end
+				local hitMark = flingAt
+				for _ = 1, 3 do
+					if not alive() or not ST.CE.Holding() then
+						break
+					end
+					local h = getHRP()
+					local g = ST.ZoneGuard(zone, h and h.Position)
+					if not g then
+						ST.CE.Talk("No guard found in zone " .. zone .. " -> standing still, move yourself")
+						return
+					end
+					ST.CE.Talk("Far from zone 1 -> walking to the zone " .. zone .. " guard")
+					moveTo(function()
+						return g.Parent and g.Position or nil
+					end, token, 8, function()
+						return not ST.CE.Holding()
+					end, true, 0.05, ST.PrimeSpeed)
+					local t2 = os.clock()
+					while alive() and os.clock() - t2 < 3 and ST.CE.Holding() do
+						RunService.Heartbeat:Wait()
+					end
+				end
+				if not alive() then
+					return
+				end
+				if ST.CE.Holding() then
+					ST.CE.Talk("The guard did not hit us -> standing still, move yourself. Waiting for another animal")
+					return
+				end
+				local hit = guardHitSince(hitMark)
+				print("[Carry Escape] guard hit detected = " .. tostring(hit) .. ", fling remote = " .. tostring(flingRemote ~= nil))
+				if not hit then
+					ST.CE.Talk("No guard hit -> no teleport. Move yourself. Waiting for another animal")
+					return
+				end
+
+				-- the animal that just dropped
+				local obj, apart
+				local t1 = os.clock()
+				repeat
+					local pf = Workspace:FindFirstChild("AnimalPickups")
+					local h = getHRP()
+					if pf and h then
+						local bd
+						for _, c in ipairs(pf:GetChildren()) do
+							if not pickBefore[c] then
+								local pt = getPart(c)
+								if pt then
+									local d = (pt.Position - h.Position).Magnitude
+									if d <= 150 and (not bd or d < bd) then
+										obj, apart, bd = c, pt, d
+									end
+								end
+							end
+						end
+					end
+					if not obj then
+						RunService.Heartbeat:Wait()
+					end
+				until obj or os.clock() - t1 > 2.5 or not alive()
+				if not alive() then
+					return
+				end
+				if not (obj and apart) then
+					ST.CE.Talk("The dropped animal was not found. Waiting for another animal")
+					return
+				end
+
+				ST.CE.Talk("Guard hit -> teleporting to the dropped animal")
+				ST.TpArmed = true
+				moveTo(function()
+					return apart.Parent and apart.Position or nil
+				end, token, 3)
+				ST.TpArmed = false
+				if not alive() or not apart.Parent then
+					return
+				end
+				ST.CE.Talk("Picking the animal up again")
+				local okc = collect(obj, apart, token, true)
+				if not alive() then
+					return
+				end
+				if not okc then
+					ST.CE.Talk("Could not pick the animal up again. Waiting for another animal")
+					return
+				end
+				ST.CE.Talk("Teleporting to zone 1")
+				ST.TpArmed = true
+				moveTo(ST.CE.Zone1, token, 2.5)
+				ST.TpArmed = false
+				RunService.Heartbeat:Wait()
+				local hz = getHRP()
+				if not (hz and flatDist(hz.Position, ST.CE.Zone1) <= 20) then
+					ST.CE.Talk("Teleport to zone 1 did not stick -> standing still, move yourself. Waiting for another animal")
+					return
+				end
+			end
+
+			-- TP Walk (CFrame steps, noclip) to the escape spot
+			ST.CE.Talk("TP Walk to the escape spot at speed " .. ST.CE.WalkSpeed)
+			ST.TpArmed = false
+			moveTo(target, token, 1.5, nil, true, nil, ST.CE.WalkSpeed)
+			local h2 = getHRP()
+			if h2 then
+				h2.AssemblyLinearVelocity = Vector3.zero
+			end
+			if h2 and flatDist(h2.Position, target) <= 8 then
+				ST.CE.Talk("At the escape spot. You can move freely until you carry another animal")
+			else
+				ST.CE.Talk("Did not reach the escape spot -> standing still, move yourself. Waiting for another animal")
+			end
+		end)
+		ST.TpArmed = false
+		ST.Ext = nil
+		ST.CE.Busy = false
+		if not ok then
+			warn("[LUNAR Hub] Auto Carry Escape error: " .. tostring(err))
+		end
+	end
+
+	function ST.CE.Start()
+		if ST.CE.Running then
+			return
+		end
+		ST.CE.Running = true
+		ST.CE.Job += 1
+		local job = ST.CE.Job
+		ST.CE.Talk("ON: waiting for an animal in your hands")
+		task.spawn(function()
+			local was = false -- the animal in our hands was already handled (or belongs to another function)
+			while ST.CE.Running and ST.CE.Job == job do
+				local hold = ST.CE.Holding()
+				if not hold then
+					was = false
+				elseif not was then
+					was = true -- one try per animal, never again for the same one
+					-- another function (Steal / Break / Titanic) handles its own animal
+					if not (ST.Ext or (ST.Running and (ST.Busy or ST.Working))) then
+						pcall(ST.CE.Cycle, job)
+					end
+				end
+				task.wait(0.2)
+			end
+		end)
+	end
+
+	function ST.CE.Stop()
+		ST.CE.Running = false
+		ST.CE.Job += 1
+		ST.CE.Busy = false
+		ST.CE.Restore()
+		ST.CE.Talk("Stopped")
+	end
+	addCleanup(function()
+		ST.CE.Running = false
+		ST.CE.Restore()
+	end)
+	if ST.CE.Want then
+		ST.CE.Want = nil
+		ST.CE.Start()
+	end
+
 	local function returnToSpot(id, pos, armed)
 		if not stAlive(id) or not pos then
 			return
@@ -5024,6 +5296,8 @@ local TRANSLATIONS = {
 	{ en = "Auto Treadmill", th = "ลู่วิ่งอัตโนมัติ" },
 	{ en = "Auto Extras", th = "ระบบเสริมอัตโนมัติ" },
 	{ en = "Auto Equip Best Pets", th = "สวมใส่สัตว์ที่ดีที่สุดอัตโนมัติ" },
+	{ en = "Auto Carry Escape", th = "วาปหนีเมื่อถือสัตว์" },
+	{ en = "Noclip all the time while ON. When you carry a new animal: if you are far from zone 1/2 you teleport to zone 1 first (guard hit), then TP Walk at speed 300 through the wall to the escape spot and stop there. Carrying the same animal again does nothing. Works behind Auto Steal", th = "เปิด noclip ตลอดเวลาที่เปิดอยู่ เมื่อถือสัตว์ตัวใหม่ ถ้าอยู่ไกลจากโซน 1/2 จะวาปไปโซน 1 ก่อน (ให้การ์ดตี) แล้ว TP Walk ความเร็ว 300 ทะลุกำแพงไปที่จุดหนีแล้วหยุด ถ้าเป็นสัตว์ตัวเดิมจะไม่ทำซ้ำ ทำงานหลัง Auto Steal" },
 	{ en = "Equips your best pets once after every successful steal, after a random 1 - 5 second delay", th = "ใส่สัตว์ที่ดีที่สุดหนึ่งครั้งหลังขโมยสำเร็จทุกครั้ง โดยหน่วงสุ่ม 1 - 5 วินาที" },
 	{ en = "Equipped best pets", th = "สวมใส่สัตว์ที่ดีที่สุดแล้ว" },
 	{ en = "Pet remote not found", th = "ไม่พบ remote ของสัตว์" },
