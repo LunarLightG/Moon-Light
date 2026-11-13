@@ -3775,8 +3775,11 @@ local FarmSystem = {
 		local total = 0
 		for _, o in ipairs(folder:GetChildren()) do
 			local part = getPart(o)
-			-- Auto Carry Escape: never pick up an animal lying near the escape spot (an animal you put down there)
-			if part and ST.CE.Mode and Vector3.new(part.Position.X - ST.CE.Pos.X, 0, part.Position.Z - ST.CE.Pos.Z).Magnitude <= 40 then
+			-- Auto Carry Escape: never pick up an animal lying where we noclip (all of zone 1, or within 120 studs of the
+			-- escape spot): that is where an animal you put down ends up, even if you walk away from it afterwards
+			if part and ST.CE.Mode
+				and (Vector3.new(part.Position.X - ST.CE.Pos.X, 0, part.Position.Z - ST.CE.Pos.Z).Magnitude <= 120
+					or (inAnyZone(part.Position) and zoneIdx(part.Position) == 1)) then
 				part = nil
 			end
 			if part then
@@ -3853,6 +3856,73 @@ local FarmSystem = {
 		return stAlive(id)
 	end
 
+	-- ===== Landing safety for far teleports (StreamingEnabled) =====
+	-- A far teleport can land where the floor is not streamed in yet: the character falls through the gap and keeps
+	-- falling once the floor appears above it. So: ask the game to stream the destination first, wait until a floor is
+	-- found, hold the character at the target height until it stands on something, and pull it back if it still ends
+	-- up far below the map.
+	local function floorRay(pos, up, down)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { LocalPlayer.Character }
+		local r = Workspace:Raycast(Vector3.new(pos.X, pos.Y + up, pos.Z), Vector3.new(0, -(up + down), 0), params)
+		if r and r.Position.Y > GROUND_Y - 20 then
+			return r
+		end
+		return nil
+	end
+
+	function ST.PrepareLanding(pos)
+		pcall(function()
+			LocalPlayer:RequestStreamAroundAsync(pos, 1.5)
+		end)
+		local t = os.clock()
+		while os.clock() - t < 1.5 and not floorRay(pos, 60, 200) do
+			RunService.Heartbeat:Wait()
+		end
+		return floorRay(pos, 60, 200) ~= nil
+	end
+
+	function ST.HoldLanding(pos, id)
+		local t = os.clock()
+		while os.clock() - t < 1.5 do
+			local hrp = getHRP()
+			if not hrp or (id and not stAlive(id)) then
+				return
+			end
+			if floorRay(hrp.Position, 0, 15) then
+				return
+			end
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			if hrp.Position.Y < pos.Y - 1 then
+				hrp.CFrame = CFrame.new(hrp.Position.X, pos.Y, hrp.Position.Z)
+			end
+			RunService.Heartbeat:Wait()
+		end
+	end
+
+	do
+		local lastSafe, nextSave = SAFE, 0
+		track(RunService.Heartbeat:Connect(function()
+			if not (ST.Running or ST.Ext or (ST.CE and (ST.CE.Running or ST.CE.Mode))) then
+				return
+			end
+			local hrp = getHRP()
+			if not hrp then
+				return
+			end
+			local p = hrp.Position
+			if p.Y < GROUND_Y - 30 then
+				-- fell under the map: back to the last safe spot
+				hrp.CFrame = CFrame.new(lastSafe)
+				hrp.AssemblyLinearVelocity = Vector3.zero
+			elseif p.Y >= GROUND_Y - 3 and p.Y <= GROUND_Y + 12 and os.clock() >= nextSave and floorRay(p, 0, 15) then
+				lastSafe = p
+				nextSave = os.clock() + 0.5
+			end
+		end))
+	end
+
 	local function moveTo(target, id, stopDist, abortFn, forceWalk, abortEvery, speed)
 		stopDist = stopDist or 2.5
 		local spd = speed or ST.Speed
@@ -3874,8 +3944,23 @@ local FarmSystem = {
 				return false
 			end
 			local np = Vector3.new(pos.X, GROUND_Y, pos.Z)
+			local far = (hrp.Position - np).Magnitude > 200
+			if far then
+				-- far teleport: make the destination floor load first
+				ST.PrepareLanding(np)
+				if not stAlive(id) or EventGate.Abort then
+					return false
+				end
+				hrp = getHRP()
+				if not hrp then
+					return false
+				end
+			end
 			hrp.CFrame = CFrame.new(np)
 			hrp.AssemblyLinearVelocity = Vector3.zero
+			if far then
+				ST.HoldLanding(np, id)
+			end
 			RunService.Heartbeat:Wait()
 			return true
 		end
@@ -4594,31 +4679,6 @@ local FarmSystem = {
 		return ST.CE.Mode and ST.CE.Pos or SAFE
 	end
 
-	-- workspace.InvisWalls: removed completely once, when the script runs (also waits a little in case it loads late)
-	do
-		local function killWalls()
-			local w = Workspace:FindFirstChild("InvisWalls")
-			if w then
-				pcall(function()
-					w:Destroy()
-				end)
-				return true
-			end
-			return false
-		end
-		if not killWalls() then
-			task.spawn(function()
-				local t = os.clock()
-				while os.clock() - t < 15 do
-					task.wait(0.5)
-					if killWalls() then
-						return
-					end
-				end
-			end)
-		end
-	end
-
 	track(RunService.Stepped:Connect(function()
 		if not ST.CE.Running then
 			return
@@ -4627,9 +4687,9 @@ local FarmSystem = {
 		if not c then
 			return
 		end
-		-- noclip only inside the radius (120 studs) around the escape spot; far from it collisions are always normal
+		-- noclip inside all of zone 1 and inside the radius (120 studs) around the escape spot; everywhere else collisions are normal
 		local root = c:FindFirstChild("HumanoidRootPart")
-		if not root or (root.Position - ST.CE.Pos).Magnitude > 120 then
+		if not root or ((root.Position - ST.CE.Pos).Magnitude > 120 and not (inAnyZone(root.Position) and zoneIdx(root.Position) == 1)) then
 			ST.CE.Restore()
 			return
 		end
@@ -4695,6 +4755,10 @@ local FarmSystem = {
 			local h = getHRP()
 			return h ~= nil and (h.Position - ST.CE.Pos).Magnitude <= 6
 		end
+		local h0 = getHRP()
+		if h0 and (h0.Position - ST.CE.Pos).Magnitude > 200 then
+			ST.PrepareLanding(ST.CE.Pos)
+		end
 		while stAlive(id) and not EventGate.Abort and holdFn() and not there() do
 			local t = os.clock()
 			while stAlive(id) and os.clock() - t < 1.5 do
@@ -4709,6 +4773,7 @@ local FarmSystem = {
 				end
 			end
 		end
+		ST.HoldLanding(ST.CE.Pos, id)
 	end
 
 	local function returnToSpot(id, pos, armed)
