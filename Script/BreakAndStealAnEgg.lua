@@ -2090,7 +2090,7 @@ local FarmSystem = {
 		end
 		local afkGui, afkTime, afkStats, afkAnti, afkRefresh
 		local afkHist, histPanel, histRefresh, buildHistoryUI
-		local afkToggle
+		local afkToggle, afkOffFn
 
 		local VirtualUser = game:GetService("VirtualUser")
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -2270,9 +2270,25 @@ local FarmSystem = {
 					ZIndex = 10,
 				}, Close)
 			end
-			track(Close.Activated:Connect(function()
+			local function closeAfk()
+				-- close directly (never depends on the toggle callback), then sync the switch silently
+				if afkOffFn then
+					local ok, err = pcall(afkOffFn)
+					if not ok then
+						warn("[LUNAR Hub] AFK close error: " .. tostring(err))
+					end
+				end
+				if afkGui then
+					afkGui.Enabled = false
+				end
 				if afkToggle then
-					afkToggle.Set(false)
+					pcall(afkToggle.Set, false, true)
+				end
+			end
+			track(Close.Activated:Connect(closeAfk))
+			track(Close.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					closeAfk()
 				end
 			end))
 
@@ -3034,16 +3050,34 @@ local FarmSystem = {
 			Stats.On = false
 			AFK.Active = false
 			AFK.Job += 1
-			stopAntiIdle()
 			if afkGui then
 				afkGui.Enabled = false
 			end
+			pcall(stopAntiIdle)
 			local snap = AFK.Snapshot
 			AFK.Snapshot = nil
+			-- restoring the snapshot may flip the AFK switch back ON (it was ON when the snapshot was taken): block that
+			AFK.Closing = true
 			if snap then
-				ApplyConfig(snap)
+				local ok, err = pcall(ApplyConfig, snap)
+				if not ok then
+					warn("[LUNAR Hub] AFK restore error: " .. tostring(err))
+				end
 			end
+			AFK.Active = false
+			AFK.Snapshot = nil
+			Stats.On = false
+			if afkGui then
+				afkGui.Enabled = false
+			end
+			if afkToggle then
+				pcall(afkToggle.Set, false, true)
+			end
+			task.delay(1.5, function()
+				AFK.Closing = false
+			end)
 		end
+		afkOffFn = afkOff
 
 		addCleanup(function()
 			Stats.On = false
@@ -3070,6 +3104,12 @@ local FarmSystem = {
 		})
 		local _afk
 		_afk, afkToggle = Toggle(Page, "AFK Mode", false, function(on)
+			if on and AFK.Closing then
+				if afkToggle then
+					pcall(afkToggle.Set, false, true)
+				end
+				return
+			end
 			if on then
 				if not afkOn() then
 					afkToggle.Set(false, true)
