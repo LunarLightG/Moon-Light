@@ -593,7 +593,7 @@ local FarmSystem = {
 	ST = {
 		Running = false, Busy = false, Working = false, Noclip = true, SafeWait = false, AntiRagdoll = true,
 		Speed = 100, Rarity = {}, Mutation = {}, Collected = 0, MinIncome = 0, Unread = 0, TpMode = true, TpArmed = false,
-		CE = { Running = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Z1 = Vector3.new(-127.983, 3.692, 0), Mode = false },
+		CE = { Running = false, Busy = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Z1 = Vector3.new(-127.983, 3.692, 0), Mode = false },
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
@@ -1766,7 +1766,7 @@ local FarmSystem = {
 				end
 				while gmAlive(id) do
 					local r = getHRP()
-					if ST.Working or evBlock() or not r then
+					if ST.Working or ST.CE.Busy or evBlock() or not r then
 						GM.Working = false
 						halt()
 						task.wait(0.2)
@@ -1779,11 +1779,11 @@ local FarmSystem = {
 						else
 							GM.Working = true
 							local startedAt, lastMove, lastPos, lastMoved = os.clock(), 0, nil, os.clock()
-							while gmAlive(id) and not ST.Working and not evBlock() and g.Parent do
+							while gmAlive(id) and not ST.Working and not ST.CE.Busy and not evBlock() and g.Parent do
 								task.wait(0.1)
 								local hrp, hum = getHRP(), getHumanoid()
 								local p = gemPos(g)
-								if not gmAlive(id) or ST.Working or not hrp or not hum or not p then
+								if not gmAlive(id) or ST.Working or ST.CE.Busy or not hrp or not hum or not p then
 									break
 								end
 								local now = os.clock()
@@ -4747,6 +4747,38 @@ local FarmSystem = {
 		return false
 	end
 
+	-- An animal of ours is on us right now (tight radius, so another player's carried animal nearby does not count).
+	function ST.CE.Carrying()
+		local f = Workspace:FindFirstChild("CarriedAnimals")
+		local hrp = getHRP()
+		if not f or not hrp then
+			return false
+		end
+		for _, d in ipairs(f:GetDescendants()) do
+			if d:IsA("BasePart") and (d.Position - hrp.Position).Magnitude <= 15 then
+				return true
+			end
+		end
+		return false
+	end
+
+	-- ST.CE.Busy: while Auto Carry Escape is ON and we are carrying an animal, every other function waits (Auto Break,
+	-- gems, Titanic, treadmill, Auto Place Eggs ...) until the animal is released.
+	do
+		local nextCheck = 0
+		track(RunService.Heartbeat:Connect(function()
+			if os.clock() < nextCheck then
+				return
+			end
+			nextCheck = os.clock() + 0.2
+			if ST.CE.Mode and ST.CE.Running then
+				ST.CE.Busy = ST.CE.Carrying()
+			else
+				ST.CE.Busy = false
+			end
+		end))
+	end
+
 	-- Auto Carry Escape: straight teleport (no TP Walk) to the escape spot, exact position incl. height. Repeats until we
 	-- are there, the animal is gone from our hands, or the loop stops.
 	function ST.CE.Warp(id, holdFn)
@@ -4869,6 +4901,17 @@ local FarmSystem = {
 				else
 					stStatus("Zone 1: already tried this animal - move yourself")
 				end
+				sleep(0.4, id)
+				continue
+			end
+
+			-- Auto Carry Escape: while an animal is in our hands (anywhere) no new round, no warp back; everything else waits too
+			if ST.CE.Mode and ST.CE.Carrying() then
+				if ST.Working or ST.Busy then
+					ST.Working = false
+					setBusy(false)
+				end
+				stStatus("Carrying an animal -> all other functions wait until it is released")
 				sleep(0.4, id)
 				continue
 			end
@@ -5330,6 +5373,7 @@ local FarmSystem = {
 		local was = ST.CE.Mode
 		ST.CE.Mode = false
 		ST.CE.Running = false
+		ST.CE.Busy = false
 		ST.CE.Restore()
 		if was then
 			stStop("Auto Carry Escape stopped")
