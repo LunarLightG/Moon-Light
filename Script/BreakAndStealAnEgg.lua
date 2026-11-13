@@ -3396,7 +3396,7 @@ local FarmSystem = {
 			return
 		end
 		freezeHumanoid()
-		if not ST.Noclip then
+		if not ST.Noclip or ST.CE.Mode then
 			return
 		end
 		local c = LocalPlayer.Character
@@ -4594,12 +4594,43 @@ local FarmSystem = {
 		return ST.CE.Mode and ST.CE.Pos or SAFE
 	end
 
+	-- workspace.InvisWalls: removed completely once, when the script runs (also waits a little in case it loads late)
+	do
+		local function killWalls()
+			local w = Workspace:FindFirstChild("InvisWalls")
+			if w then
+				pcall(function()
+					w:Destroy()
+				end)
+				return true
+			end
+			return false
+		end
+		if not killWalls() then
+			task.spawn(function()
+				local t = os.clock()
+				while os.clock() - t < 15 do
+					task.wait(0.5)
+					if killWalls() then
+						return
+					end
+				end
+			end)
+		end
+	end
+
 	track(RunService.Stepped:Connect(function()
 		if not ST.CE.Running then
 			return
 		end
 		local c = LocalPlayer.Character
 		if not c then
+			return
+		end
+		-- noclip only inside the radius (120 studs) around the escape spot; far from it collisions are always normal
+		local root = c:FindFirstChild("HumanoidRootPart")
+		if not root or (root.Position - ST.CE.Pos).Magnitude > 120 then
+			ST.CE.Restore()
 			return
 		end
 		for _, d in ipairs(c:GetDescendants()) do
@@ -4649,11 +4680,35 @@ local FarmSystem = {
 			return false
 		end
 		for _, d in ipairs(f:GetDescendants()) do
-			if d:IsA("BasePart") and (d.Position - hrp.Position).Magnitude <= 12 then
+			if d:IsA("BasePart") and (d.Position - hrp.Position).Magnitude <= 40 then
 				return true
 			end
 		end
 		return false
+	end
+
+	-- Auto Carry Escape: straight teleport (no TP Walk) to the escape spot, exact position incl. height. Repeats until we
+	-- are there, the animal is gone from our hands, or the loop stops.
+	function ST.CE.Warp(id, holdFn)
+		holdFn = holdFn or ST.CE.Holding
+		local function there()
+			local h = getHRP()
+			return h ~= nil and (h.Position - ST.CE.Pos).Magnitude <= 6
+		end
+		while stAlive(id) and not EventGate.Abort and holdFn() and not there() do
+			local t = os.clock()
+			while stAlive(id) and os.clock() - t < 1.5 do
+				local h = getHRP()
+				if h then
+					h.CFrame = CFrame.new(ST.CE.Pos)
+					h.AssemblyLinearVelocity = Vector3.zero
+				end
+				RunService.Heartbeat:Wait()
+				if there() and os.clock() - t > 0.25 then
+					break
+				end
+			end
+		end
 	end
 
 	local function returnToSpot(id, pos, armed)
@@ -4742,10 +4797,8 @@ local FarmSystem = {
 					ST.CE.Tried = true -- one try per animal
 					claimWork(id)
 					setBusy(true)
-					stStatus("Zone 1 -> walking straight to the escape spot")
-					moveTo(ST.CE.Pos, id, 3, function()
-						return not ST.CE.Holding()
-					end, true, 0.2)
+					stStatus("Zone 1 -> teleporting to the escape spot")
+					ST.CE.Warp(id)
 					setBusy(false)
 					ST.Working = false
 				else
@@ -5026,14 +5079,14 @@ local FarmSystem = {
 					elseif deliverTp and tpHitDone then
 						ST.TpArmed = true
 						-- Carry Escape: teleport to zone 1 first, then walk (noclip) to the escape spot
-						stStatus(ST.CE.Mode and "Teleport -> zone 1" or "Teleport -> Safe Zone")
-						moveTo(ST.CE.Mode and ST.CE.Z1 or ST.CE.Dest(), id, 2.5)
+						stStatus(ST.CE.Mode and "Teleport -> escape spot" or "Teleport -> Safe Zone")
 						if ST.CE.Mode then
 							ST.TpArmed = false
-							if stAlive(id) then
-								stStatus("Zone 1 -> walking (noclip) to the escape spot")
-								moveTo(ST.CE.Pos, id, 3, nil, true, 0.2)
-							end
+							ST.CE.Warp(id, holding)
+							-- arrived: free the character (controls, speed, jump, collisions)
+							setBusy(false)
+						else
+							moveTo(ST.CE.Dest(), id, 2.5)
 						end
 						local t3 = os.clock()
 						local safeWait = ST.CE.Mode and 0 or 2.5
@@ -5055,7 +5108,12 @@ local FarmSystem = {
 						end
 					else
 						ST.TpArmed = false
-						moveTo(ST.CE.Dest(), id, nil, lost, false, 0.05)
+						if ST.CE.Mode then
+							ST.CE.Warp(id, holding)
+							setBusy(false)
+						else
+							moveTo(ST.CE.Dest(), id, nil, lost, false, 0.05)
+						end
 						if not stAlive(id) then
 							finished = true
 						elseif zone1Out and lost() then
@@ -5242,7 +5300,7 @@ local FarmSystem = {
 		else
 			ST.CE.Stop()
 		end
-	end, nil, "Finds animals by itself (its own Rarity / Min Income), steals them and teleports to the escape spot outside the map instead of the Safe Zone. Noclip while ON. Turns Auto Steal OFF (they share the same loop)")
+	end, nil, "Finds animals by itself (its own Rarity / Min Income), steals them and teleports straight to the escape spot outside the map instead of the Safe Zone. Once there you can walk and drop the animal; a dropped animal is not picked up again by itself. Noclip while ON. Turns Auto Steal OFF (they share the same loop)")
 	Dropdown(Page2, "Carry Escape Rarity", {
 		Multi = true,
 		Options = STEAL_RARITIES,
@@ -5835,7 +5893,7 @@ local TRANSLATIONS = {
 	{ en = "Auto Carry Escape", th = "วาปหนีเมื่อถือสัตว์" },
 	{ en = "Carry Escape Rarity", th = "ความหายากของวาปหนี" },
 	{ en = "Carry Escape Min Income / s", th = "รายได้ขั้นต่ำ / วินาที ของวาปหนี" },
-	{ en = "Finds animals by itself (its own Rarity / Min Income), steals them and teleports to the escape spot outside the map instead of the Safe Zone. Noclip while ON. Turns Auto Steal OFF (they share the same loop)", th = "หาสัตว์เอง (ใช้ความหายากและรายได้ขั้นต่ำของตัวเอง) ขโมยแล้ววาปไปจุดหนีนอกแมพแทนโซนปลอดภัย เปิด noclip ตลอดที่เปิดอยู่ จะปิด Auto Steal (ใช้ลูปเดียวกัน)" },
+	{ en = "Finds animals by itself (its own Rarity / Min Income), steals them and teleports straight to the escape spot outside the map instead of the Safe Zone. Once there you can walk and drop the animal; a dropped animal is not picked up again by itself. Noclip while ON. Turns Auto Steal OFF (they share the same loop)", th = "หาสัตว์เอง (ใช้ความหายากและรายได้ขั้นต่ำของตัวเอง) ขโมยแล้ววาปไปจุดหนีนอกแมพแทนโซนปลอดภัย เปิด noclip ตลอดที่เปิดอยู่ จะปิด Auto Steal (ใช้ลูปเดียวกัน)" },
 	{ en = "Auto Sell", th = "ขายอัตโนมัติ" },
 	{ en = "Auto Place Eggs", th = "วางไข่อัตโนมัติ" },
 	{ en = "Your plot was not found", th = "ไม่พบพล็อตของคุณ" },
