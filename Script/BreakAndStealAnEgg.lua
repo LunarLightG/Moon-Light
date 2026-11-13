@@ -593,7 +593,7 @@ local FarmSystem = {
 	ST = {
 		Running = false, Busy = false, Working = false, Noclip = true, SafeWait = false, AntiRagdoll = true,
 		Speed = 100, Rarity = {}, Mutation = {}, Collected = 0, MinIncome = 0, Unread = 0, TpMode = true, TpArmed = false,
-		CE = { Running = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Mode = false },
+		CE = { Running = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Z1 = Vector3.new(-127.983, 3.692, 0), Mode = false },
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
@@ -3735,6 +3735,10 @@ local FarmSystem = {
 		local total = 0
 		for _, o in ipairs(folder:GetChildren()) do
 			local part = getPart(o)
+			-- Auto Carry Escape: never pick up an animal lying near the escape spot (an animal you put down there)
+			if part and ST.CE.Mode and Vector3.new(part.Position.X - ST.CE.Pos.X, 0, part.Position.Z - ST.CE.Pos.Z).Magnitude <= 40 then
+				part = nil
+			end
 			if part then
 				total += 1
 				local r = getRarity(o)
@@ -4585,6 +4589,33 @@ local FarmSystem = {
 		ST.CE.Restore()
 	end)
 
+	-- Zone 1 rule of Auto Carry Escape: inside zone 1 (not standing at the escape spot itself) there is no guard hit and
+	-- nothing is picked up automatically. An animal you pick up yourself is simply walked to the escape spot.
+	function ST.CE.InZone1(pos)
+		if not pos then
+			return false
+		end
+		if zoneIdx(pos) ~= 1 or not inAnyZone(pos) then
+			return false
+		end
+		return Vector3.new(pos.X - ST.CE.Pos.X, 0, pos.Z - ST.CE.Pos.Z).Magnitude > 15
+	end
+
+	-- an animal of ours is in our hands: a carried animal part right next to the character
+	function ST.CE.Holding()
+		local f = Workspace:FindFirstChild("CarriedAnimals")
+		local hrp = getHRP()
+		if not f or not hrp then
+			return false
+		end
+		for _, d in ipairs(f:GetDescendants()) do
+			if d:IsA("BasePart") and (d.Position - hrp.Position).Magnitude <= 12 then
+				return true
+			end
+		end
+		return false
+	end
+
 	local function returnToSpot(id, pos, armed)
 		if not stAlive(id) or not pos then
 			return
@@ -4640,6 +4671,47 @@ local FarmSystem = {
 			if not Workspace:FindFirstChild("AnimalPickups") then
 				stStatus("Waiting for AnimalPickups folder...")
 				sleep(1, id)
+				continue
+			end
+
+			-- Auto Carry Escape: at the escape spot with the animal still in our hands -> stand still, no new round
+			-- (the player moves freely). The loop works again as soon as nothing is carried any more.
+			if ST.CE.Mode then
+				local flatEsc = Vector3.new(hrp.Position.X - ST.CE.Pos.X, 0, hrp.Position.Z - ST.CE.Pos.Z).Magnitude
+				if flatEsc <= 15 and ST.CE.Holding() then
+					if ST.Working or ST.Busy then
+						ST.Working = false
+						setBusy(false)
+					end
+					stStatus("At the escape spot with the animal -> standing still, move yourself")
+					sleep(0.4, id)
+					continue
+				end
+			end
+
+			-- Auto Carry Escape in zone 1: no guard, no automatic pick-up; an animal you pick up yourself is walked out
+			if ST.CE.Mode and ST.CE.InZone1(hrp.Position) then
+				if not ST.CE.Holding() then
+					ST.CE.Tried = false
+					if ST.Working or ST.Busy then
+						ST.Working = false
+						setBusy(false)
+					end
+					stStatus("Zone 1: pick up an animal yourself (nothing is picked up automatically)")
+				elseif not ST.CE.Tried then
+					ST.CE.Tried = true -- one try per animal
+					claimWork(id)
+					setBusy(true)
+					stStatus("Zone 1 -> walking straight to the escape spot")
+					moveTo(ST.CE.Pos, id, 3, function()
+						return not ST.CE.Holding()
+					end, true, 0.2)
+					setBusy(false)
+					ST.Working = false
+				else
+					stStatus("Zone 1: already tried this animal - move yourself")
+				end
+				sleep(0.4, id)
 				continue
 			end
 
@@ -4771,7 +4843,10 @@ local FarmSystem = {
 				EQ.Kick()
 				local hs = getHRP()
 				stealPos = hs and hs.Position or nil
-				local deliverTp = ST.TpMode -- return leg always uses TP mode (guard hit -> teleport to Safe Zone), whatever the zone
+				local hpz = getHRP()
+				-- Auto Carry Escape + stolen inside zone 1: walk straight to the escape spot, no guard hit, no recovery
+				local zone1Out = ST.CE.Mode and ST.CE.InZone1(hpz and hpz.Position)
+				local deliverTp = ST.TpMode and not zone1Out -- return leg always uses TP mode (guard hit -> teleport), except zone 1 of Carry Escape
 				local histEntry = Stats.AddSteal(eMuts, eInfo or {})
 				stStatus("Stolen! Heading back to Safe Zone")
 				local DROP_NEAR_SAFE = 30
@@ -4910,10 +4985,18 @@ local FarmSystem = {
 						end
 					elseif deliverTp and tpHitDone then
 						ST.TpArmed = true
-						stStatus(ST.CE.Mode and "Teleport -> escape spot" or "Teleport -> Safe Zone")
-						moveTo(ST.CE.Dest(), id, 2.5)
+						-- Carry Escape: teleport to zone 1 first, then walk (noclip) to the escape spot
+						stStatus(ST.CE.Mode and "Teleport -> zone 1" or "Teleport -> Safe Zone")
+						moveTo(ST.CE.Mode and ST.CE.Z1 or ST.CE.Dest(), id, 2.5)
+						if ST.CE.Mode then
+							ST.TpArmed = false
+							if stAlive(id) then
+								stStatus("Zone 1 -> walking (noclip) to the escape spot")
+								moveTo(ST.CE.Pos, id, 3, nil, true, 0.2)
+							end
+						end
 						local t3 = os.clock()
-						local safeWait = 2.5
+						local safeWait = ST.CE.Mode and 0 or 2.5
 						while stAlive(id) and os.clock() - t3 < safeWait and holding() do
 							RunService.Heartbeat:Wait()
 						end
@@ -4935,6 +5018,8 @@ local FarmSystem = {
 						moveTo(ST.CE.Dest(), id, nil, lost, false, 0.05)
 						if not stAlive(id) then
 							finished = true
+						elseif zone1Out and lost() then
+							finished = true -- zone 1: the dropped animal is not picked up again automatically
 						elseif lost() then
 							local gh = byGuard()
 							recoveries += 1
