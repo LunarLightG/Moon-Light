@@ -2099,10 +2099,12 @@ local FarmSystem = {
 			VIM = game:GetService("VirtualInputManager")
 		end)
 		local idleConn
+		local antiIdleAlive = true
 		local blockOn = false
 		local hooked = false
 		local blockRemote
 		local disabledConns = {}
+		local disabledSet = setmetatable({}, { __mode = "k" })
 
 		local function poke()
 			pcall(function()
@@ -2144,8 +2146,11 @@ local FarmSystem = {
 			if type(getconnections) == "function" and blockRemote:IsA("RemoteEvent") then
 				pcall(function()
 					for _, c in ipairs(getconnections(blockRemote.OnClientEvent)) do
-						c:Disable()
-						disabledConns[#disabledConns + 1] = c
+						if not disabledSet[c] then
+							disabledSet[c] = true
+							c:Disable()
+							disabledConns[#disabledConns + 1] = c
+						end
 					end
 				end)
 			end
@@ -2161,6 +2166,7 @@ local FarmSystem = {
 		end
 
 		local function stopAntiIdle()
+			antiIdleAlive = false
 			blockOn = false
 			for _, c in ipairs(disabledConns) do
 				pcall(function()
@@ -2168,11 +2174,37 @@ local FarmSystem = {
 				end)
 			end
 			disabledConns = {}
+			disabledSet = setmetatable({}, { __mode = "k" })
 			if idleConn then
 				idleConn:Disconnect()
 				idleConn = nil
 			end
 		end
+
+		startAntiIdle()
+		task.spawn(function()
+			local lastPoke = os.clock()
+			local lastJump = os.clock()
+			while antiIdleAlive do
+				if not blockRemote then
+					pcall(installBlock)
+				end
+				if os.clock() - lastPoke >= 30 then
+					lastPoke = os.clock()
+					poke()
+				end
+				if os.clock() - lastJump >= 40 then
+					lastJump = os.clock()
+					if not ST.Busy and not (ST.CE and ST.CE.Busy) and not EventGate.Active then
+						local hum = getHumanoid()
+						if hum and hum.Health > 0 then
+							hum.Jump = true
+						end
+					end
+				end
+				task.wait(0.5)
+			end
+		end)
 
 		local function fmtTime(sec)
 			sec = math.max(0, math.floor(sec))
@@ -3016,26 +3048,11 @@ local FarmSystem = {
 			local g = buildAfkGui()
 			g.Enabled = true
 			afkRefresh()
-			if AFK.AntiIdle then
-				startAntiIdle()
-			end
+			startAntiIdle()
 			local job = AFK.Job
 			task.spawn(function()
-				local lastPoke = os.clock()
-				local lastJump = os.clock()
 				while AFK.Active and AFK.Job == job do
 					pcall(afkRefresh)
-					if AFK.AntiIdle and os.clock() - lastPoke >= 30 then
-						lastPoke = os.clock()
-						poke()
-					end
-					if AFK.AntiIdle and os.clock() - lastJump >= 40 then
-						lastJump = os.clock()
-						local hum = getHumanoid()
-						if hum and hum.Health > 0 then
-							hum.Jump = true
-						end
-					end
 					task.wait(0.5)
 				end
 			end)
@@ -3053,7 +3070,6 @@ local FarmSystem = {
 			if afkGui then
 				afkGui.Enabled = false
 			end
-			pcall(stopAntiIdle)
 			local snap = AFK.Snapshot
 			AFK.Snapshot = nil
 			-- restoring the snapshot may flip the AFK switch back ON (it was ON when the snapshot was taken): block that
