@@ -423,6 +423,8 @@ local FarmSystem = {
 
 	local Page = CreatePage("Farm")
 	CreateTab("Farm", "124620632231839")
+	local Page2 = CreatePage("Extras")
+	CreateTab("Extras", "9013498676")
 
 	local BREAK_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal" }
 	local STEAL_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial" }
@@ -591,7 +593,7 @@ local FarmSystem = {
 	ST = {
 		Running = false, Busy = false, Working = false, Noclip = true, SafeWait = false, AntiRagdoll = true,
 		Speed = 100, Rarity = {}, Mutation = {}, Collected = 0, MinIncome = 0, Unread = 0, TpMode = true, TpArmed = false,
-		CE = { Running = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Zone1 = Vector3.new(-135.2, 3.693, -28.1), WalkSpeed = 300, FarZone = 4 },
+		CE = { Running = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Mode = false },
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
@@ -610,7 +612,7 @@ local FarmSystem = {
 	end
 
 	local function breakBlocked()
-		return ST.Working or ST.CE.Busy or GM.Working or TT.Working or evBlock()
+		return SW.PEBusy or ST.Working or ST.CE.Busy or GM.Working or TT.Working or evBlock()
 	end
 
 	local swToggle, stToggle
@@ -903,6 +905,9 @@ local FarmSystem = {
 	end
 
 	local function equipPickaxe()
+		if SW.PlacingEgg then
+			return true -- Auto Place Eggs is holding an egg right now: do not swap it for the pickaxe
+		end
 		local char = LocalPlayer.Character
 		local hum = getHumanoid()
 		if not (char and hum) then
@@ -1890,7 +1895,7 @@ local FarmSystem = {
 	end
 
 	function TM.Blocked()
-		return ST.Working or ST.CE.Busy or GM.Working or TT.Working or SW.Working or evBlock()
+		return SW.PEBusy or ST.Working or ST.CE.Busy or GM.Working or TT.Working or SW.Working or evBlock()
 	end
 
 	TM.Leaving = false
@@ -3075,11 +3080,10 @@ local FarmSystem = {
 		end, nil, "Covers the screen with the LUNAR HUB screen and shows how long it has been running. Uses the chosen AFK Config while ON and restores your previous settings when closed")
 	end
 
-	Section(Page, "Auto Extras")
-	setTmStatus = StatusCard(Page, "Idle")
-	setEqStatus = StatusCard(Page, "Idle")
-	ST.CE.Say = StatusCard(Page, "Idle")
-	Toggle(Page, "Auto Treadmill", false, function(on)
+	Section(Page2, "Auto Extras")
+	setTmStatus = StatusCard(Page2, "Idle")
+	setEqStatus = StatusCard(Page2, "Idle")
+	Toggle(Page2, "Auto Treadmill", false, function(on)
 		if on then
 			TM.Start()
 			setTmStatus("Started")
@@ -3087,26 +3091,22 @@ local FarmSystem = {
 		TM.Stop()
 		end
 	end, nil, "Lowest priority: walks to your treadmill when nothing else is working, leaves when another function starts")
-	Toggle(Page, "Auto Equip Best Pets", false, function(on)
+	Toggle(Page2, "Auto Equip Best Pets", false, function(on)
 		if on then
 			EQ.Start()
 		else
 			EQ.Stop()
 		end
 	end, nil, "Equips your best pets once after every successful steal, after a random 1 - 5 second delay")
-	Toggle(Page, "Auto Carry Escape", false, function(on)
+	Toggle(Page2, "Auto Place Eggs", false, function(on)
 		if on then
-			if ST.CE.Start then
-				ST.CE.Start()
-			else
-				ST.CE.Want = true
+			if SW.PEStart then
+				SW.PEStart()
 			end
-		elseif ST.CE.Stop then
-			ST.CE.Stop()
-		else
-			ST.CE.Want = false
+		elseif SW.PEStop then
+			SW.PEStop()
 		end
-	end, nil, "Noclip all the time while ON. When you carry a new animal: if you are far from zone 1/2 you teleport to zone 1 first (guard hit), then TP Walk at speed 300 through the wall to the escape spot and stop there. Carrying the same animal again does nothing. Works behind Auto Steal")
+	end, nil, "Walks to your plot (TP Walk, speed 100), holds each egg you carry and keeps placing eggs at random spots while it keeps TP-walking around your garden, with no delay and no messages. Pauses while Auto Steal / a Hell Event is working")
 
 	Section(Page, "Auto Break")
 	setSwStatus = StatusCard(Page, "Idle")
@@ -3615,14 +3615,22 @@ local FarmSystem = {
 		end
 		return nil
 	end
+	-- the filter in use: Auto Steal's own, or the Auto Carry Escape one while it runs
+	local function FL()
+		if ST.CE.Mode and ST.CE.F then
+			return ST.CE.F
+		end
+		return ST
+	end
 	local function passIncome(obj)
-		if ST.MinIncome <= 0 then return true end
+		local minInc = FL().MinIncome
+		if minInc <= 0 then return true end
 		local inc = incomeOf(obj)
 		if inc == nil then
 			ST.Unread += 1
 			return false
 		end
-		return inc >= ST.MinIncome
+		return inc >= minInc
 	end
 
 	local MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky",
@@ -3695,10 +3703,11 @@ local FarmSystem = {
 	end
 
 	local function chosenFrom(found)
-		if next(ST.Mutation) == nil then
+		local want = FL().Mutation
+		if next(want) == nil then
 			return false
 		end
-		for n in pairs(ST.Mutation) do
+		for n in pairs(want) do
 			if found[n] then
 				return true
 			end
@@ -3745,7 +3754,7 @@ local FarmSystem = {
 				if not r then
 					reason = "cut: rarity unreadable"
 					cut.norarity += 1
-				elseif not ST.Rarity[r] then
+				elseif not FL().Rarity[r] then
 					reason = "cut: rarity " .. r .. " not selected"
 					cut.rarity += 1
 				elseif not (chosen or passIncome(o)) then
@@ -3974,7 +3983,7 @@ local FarmSystem = {
 			return false
 		end
 		local r = getRarity(o)
-		if not r or not ST.Rarity[r] then
+		if not r or not FL().Rarity[r] then
 			return false
 		end
 		if chosenFrom((mutationsOf(o))) then
@@ -4533,30 +4542,12 @@ local FarmSystem = {
 	end
 
 	-- ===== Auto Carry Escape =====
-	-- ON  : noclip all the time (every frame). For every NEW animal in our hands: close to zone 1/2 -> TP Walk (speed 300)
-	--       straight to the escape spot; far away -> guard hit + teleport to zone 1 first, then TP Walk. At the spot it
-	--       stops and we are free. Carrying the same animal again does nothing. Works behind Auto Steal.
-	-- OFF : noclip off (collisions restored), nothing else happens.
-	function ST.CE.Talk(t)
-		print("[Carry Escape] " .. tostring(t)) -- the status card is hidden, so also log to the console
-		if ST.CE.Say then
-			ST.CE.Say(t)
-		end
-	end
-
-	-- an animal of ours is in our hands: a carried animal part right next to the character
-	function ST.CE.Holding()
-		local f = Workspace:FindFirstChild("CarriedAnimals")
-		local hrp = getHRP()
-		if not f or not hrp then
-			return false
-		end
-		for _, d in ipairs(f:GetDescendants()) do
-			if d:IsA("BasePart") and (d.Position - hrp.Position).Magnitude <= 12 then
-				return true
-			end
-		end
-		return false
+	-- Separate system (Extras tab) with its own switch, Rarity and Min Income. It is the Auto Steal loop with its own
+	-- filter that finds its targets itself, but the animal is delivered to the escape spot (ST.CE.Pos, outside the map)
+	-- instead of the Safe Zone. Noclip every frame while ON, collisions are restored when it is turned OFF.
+	-- It uses the same loop as Auto Steal, so the two can not run at the same time (turning one ON turns the other OFF).
+	function ST.CE.Dest()
+		return ST.CE.Mode and ST.CE.Pos or SAFE
 	end
 
 	track(RunService.Stepped:Connect(function()
@@ -4588,206 +4579,11 @@ local FarmSystem = {
 		ST.CE.Orig = setmetatable({}, { __mode = "k" })
 	end
 
-	-- Runs once for every NEW animal in our hands, behind Auto Steal (never starts while Auto Steal is busy, stops as soon
-	-- as it starts working).
-	--  * 3 zones or less from the start: just TP Walk (through the wall, noclip) to the escape spot at WalkSpeed.
-	--  * FarZone or further: first teleport to zone 1 with Auto Steal's recipe (the guard of our zone hits us, the teleport
-	--    is armed, teleport to the dropped animal, pick it up, teleport to zone 1), then TP Walk to the escape spot.
-	-- At the escape spot it stops and gives the control back. Carrying the same animal again does nothing.
-	function ST.CE.Cycle(job)
-		local token = {}
-		local function alive()
-			return ST.CE.Running and ST.CE.Job == job and not (ST.Running and (ST.Busy or ST.Working))
-		end
-		if ST.Ext or not alive() then
-			return
-		end
-		local hrp = getHRP()
-		if not hrp then
-			return
-		end
-		local target = ST.CE.Pos
-		if flatDist(hrp.Position, target) <= 40 then
-			ST.CE.Talk("Already at the escape spot. You can move freely until you carry another animal")
-			return
-		end
-		local zone = zoneIdx(hrp.Position)
-		if zone < 1 then
-			zone = ST.PrimeZone(hrp.Position)
-		end
-		local far = zone ~= nil and zone >= ST.CE.FarZone
-		ST.CE.Busy = true
-		ST.Ext = { id = token, alive = alive, say = ST.CE.Talk }
-		local ok, err = pcall(function()
-			if far then
-				local pickBefore = {}
-				local pf0 = Workspace:FindFirstChild("AnimalPickups")
-				if pf0 then
-					for _, c in ipairs(pf0:GetChildren()) do
-						pickBefore[c] = true
-					end
-				end
-				local hitMark = flingAt
-				for _ = 1, 3 do
-					if not alive() or not ST.CE.Holding() then
-						break
-					end
-					local h = getHRP()
-					local g = ST.ZoneGuard(zone, h and h.Position)
-					if not g then
-						ST.CE.Talk("No guard found in zone " .. zone .. " -> standing still, move yourself")
-						return
-					end
-					ST.CE.Talk("Far from zone 1 -> walking to the zone " .. zone .. " guard")
-					moveTo(function()
-						return g.Parent and g.Position or nil
-					end, token, 8, function()
-						return not ST.CE.Holding()
-					end, true, 0.05, ST.PrimeSpeed)
-					local t2 = os.clock()
-					while alive() and os.clock() - t2 < 3 and ST.CE.Holding() do
-						RunService.Heartbeat:Wait()
-					end
-				end
-				if not alive() then
-					return
-				end
-				if ST.CE.Holding() then
-					ST.CE.Talk("The guard did not hit us -> standing still, move yourself. Waiting for another animal")
-					return
-				end
-				local hit = guardHitSince(hitMark)
-				print("[Carry Escape] guard hit detected = " .. tostring(hit) .. ", fling remote = " .. tostring(flingRemote ~= nil))
-				if not hit then
-					ST.CE.Talk("No guard hit -> no teleport. Move yourself. Waiting for another animal")
-					return
-				end
-
-				-- the animal that just dropped
-				local obj, apart
-				local t1 = os.clock()
-				repeat
-					local pf = Workspace:FindFirstChild("AnimalPickups")
-					local h = getHRP()
-					if pf and h then
-						local bd
-						for _, c in ipairs(pf:GetChildren()) do
-							if not pickBefore[c] then
-								local pt = getPart(c)
-								if pt then
-									local d = (pt.Position - h.Position).Magnitude
-									if d <= 150 and (not bd or d < bd) then
-										obj, apart, bd = c, pt, d
-									end
-								end
-							end
-						end
-					end
-					if not obj then
-						RunService.Heartbeat:Wait()
-					end
-				until obj or os.clock() - t1 > 2.5 or not alive()
-				if not alive() then
-					return
-				end
-				if not (obj and apart) then
-					ST.CE.Talk("The dropped animal was not found. Waiting for another animal")
-					return
-				end
-
-				ST.CE.Talk("Guard hit -> teleporting to the dropped animal")
-				ST.TpArmed = true
-				moveTo(function()
-					return apart.Parent and apart.Position or nil
-				end, token, 3)
-				ST.TpArmed = false
-				if not alive() or not apart.Parent then
-					return
-				end
-				ST.CE.Talk("Picking the animal up again")
-				local okc = collect(obj, apart, token, true)
-				if not alive() then
-					return
-				end
-				if not okc then
-					ST.CE.Talk("Could not pick the animal up again. Waiting for another animal")
-					return
-				end
-				ST.CE.Talk("Teleporting to zone 1")
-				ST.TpArmed = true
-				moveTo(ST.CE.Zone1, token, 2.5)
-				ST.TpArmed = false
-				RunService.Heartbeat:Wait()
-				local hz = getHRP()
-				if not (hz and flatDist(hz.Position, ST.CE.Zone1) <= 20) then
-					ST.CE.Talk("Teleport to zone 1 did not stick -> standing still, move yourself. Waiting for another animal")
-					return
-				end
-			end
-
-			-- TP Walk (CFrame steps, noclip) to the escape spot
-			ST.CE.Talk("TP Walk to the escape spot at speed " .. ST.CE.WalkSpeed)
-			ST.TpArmed = false
-			moveTo(target, token, 1.5, nil, true, nil, ST.CE.WalkSpeed)
-			local h2 = getHRP()
-			if h2 then
-				h2.AssemblyLinearVelocity = Vector3.zero
-			end
-			if h2 and flatDist(h2.Position, target) <= 8 then
-				ST.CE.Talk("At the escape spot. You can move freely until you carry another animal")
-			else
-				ST.CE.Talk("Did not reach the escape spot -> standing still, move yourself. Waiting for another animal")
-			end
-		end)
-		ST.TpArmed = false
-		ST.Ext = nil
-		ST.CE.Busy = false
-		if not ok then
-			warn("[LUNAR Hub] Auto Carry Escape error: " .. tostring(err))
-		end
-	end
-
-	function ST.CE.Start()
-		if ST.CE.Running then
-			return
-		end
-		ST.CE.Running = true
-		ST.CE.Job += 1
-		local job = ST.CE.Job
-		ST.CE.Talk("ON: waiting for an animal in your hands")
-		task.spawn(function()
-			local was = false -- the animal in our hands was already handled (or belongs to another function)
-			while ST.CE.Running and ST.CE.Job == job do
-				local hold = ST.CE.Holding()
-				if not hold then
-					was = false
-				elseif not was then
-					was = true -- one try per animal, never again for the same one
-					-- another function (Steal / Break / Titanic) handles its own animal
-					if not (ST.Ext or (ST.Running and (ST.Busy or ST.Working))) then
-						pcall(ST.CE.Cycle, job)
-					end
-				end
-				task.wait(0.2)
-			end
-		end)
-	end
-
-	function ST.CE.Stop()
-		ST.CE.Running = false
-		ST.CE.Job += 1
-		ST.CE.Busy = false
-		ST.CE.Restore()
-		ST.CE.Talk("Stopped")
-	end
 	addCleanup(function()
 		ST.CE.Running = false
+		ST.CE.Mode = false
 		ST.CE.Restore()
 	end)
-	if ST.CE.Want then
-		ST.CE.Want = nil
-		ST.CE.Start()
-	end
 
 	local function returnToSpot(id, pos, armed)
 		if not stAlive(id) or not pos then
@@ -4996,7 +4792,7 @@ local FarmSystem = {
 						return false
 					end
 					local h = getHRP()
-					if h and Vector3.new(h.Position.X - SAFE.X, 0, h.Position.Z - SAFE.Z).Magnitude <= DROP_NEAR_SAFE then
+					if h and Vector3.new(h.Position.X - ST.CE.Dest().X, 0, h.Position.Z - ST.CE.Dest().Z).Magnitude <= DROP_NEAR_SAFE then
 						return false
 					end
 					return true
@@ -5114,8 +4910,8 @@ local FarmSystem = {
 						end
 					elseif deliverTp and tpHitDone then
 						ST.TpArmed = true
-						stStatus("Teleport -> Safe Zone")
-						moveTo(SAFE, id, 2.5)
+						stStatus(ST.CE.Mode and "Teleport -> escape spot" or "Teleport -> Safe Zone")
+						moveTo(ST.CE.Dest(), id, 2.5)
 						local t3 = os.clock()
 						local safeWait = 2.5
 						while stAlive(id) and os.clock() - t3 < safeWait and holding() do
@@ -5136,7 +4932,7 @@ local FarmSystem = {
 						end
 					else
 						ST.TpArmed = false
-						moveTo(SAFE, id, nil, lost, false, 0.05)
+						moveTo(ST.CE.Dest(), id, nil, lost, false, 0.05)
 						if not stAlive(id) then
 							finished = true
 						elseif lost() then
@@ -5165,7 +4961,7 @@ local FarmSystem = {
 					ST.TpArmed = false
 					needSafe = false
 					startFromSafe = false
-				elseif ST.TpMode and stealPos then
+				elseif ST.TpMode and stealPos and not ST.CE.Mode then
 					if stAlive(id) then
 						returnToSpot(id, stealPos, tpHitDone)
 					end
@@ -5230,6 +5026,12 @@ local FarmSystem = {
 	setStStatus = StatusCard(Page, "Idle   |   Stolen: 0")
 	_, stToggle = Toggle(Page, "Auto Steal", false, function(on)
 		if on then
+			if ST.CE.Mode then
+				ST.CE.Stop()
+				pcall(function()
+					ST.CE.Toggle.Set(false, true)
+				end)
+			end
 			if not stStart() then
 				stToggle.Set(false, true)
 			else
@@ -5275,6 +5077,614 @@ local FarmSystem = {
 		end,
 	})
 
+	-- ===== Auto Carry Escape (Extras tab) =====
+	function ST.CE.Stop()
+		local was = ST.CE.Mode
+		ST.CE.Mode = false
+		ST.CE.Running = false
+		ST.CE.Restore()
+		if was then
+			stStop("Auto Carry Escape stopped")
+		end
+	end
+
+	function ST.CE.Start()
+		if ST.CE.Mode then
+			return true
+		end
+		if ST.Running then
+			stStop("Switched to Auto Carry Escape")
+			pcall(function()
+				stToggle.Set(false, true)
+			end)
+		end
+		ST.CE.Mode = true
+		ST.CE.Running = true
+		if not stStart() then
+			ST.CE.Stop()
+			return false
+		end
+		return true
+	end
+
+	Section(Page2, "Auto Carry Escape")
+	ST.CE.F = { Rarity = toSet(STEAL_DEFAULT), Mutation = {}, MinIncome = 0 }
+	_, ST.CE.Toggle = Toggle(Page2, "Auto Carry Escape", false, function(on)
+		if on then
+			if not ST.CE.Start() then
+				ST.CE.Toggle.Set(false, true)
+			end
+		else
+			ST.CE.Stop()
+		end
+	end, nil, "Finds animals by itself (its own Rarity / Min Income), steals them and teleports to the escape spot outside the map instead of the Safe Zone. Noclip while ON. Turns Auto Steal OFF (they share the same loop)")
+	Dropdown(Page2, "Carry Escape Rarity", {
+		Multi = true,
+		Options = STEAL_RARITIES,
+		Default = STEAL_DEFAULT,
+		Placeholder = "Select rarity",
+		Desc = "Tap to choose one or more",
+		OnChange = function(chosen)
+			ST.CE.F.Rarity = toSet(chosen)
+		end,
+	})
+	_, ST.CE.IncomeInput = TextInputCb(Page2, "Carry Escape Min Income / s", "", "e.g. 500K, 1.2M", function(text)
+		local v = 0
+		if type(text) == "string" and text:match("%S") then
+			v = parseAmount(text)
+			if v == nil then
+				Notify("Invalid number", false)
+				v = 0
+			end
+		end
+		ST.CE.F.MinIncome = v
+		if ST.CE.IncomeInput then ST.CE.IncomeInput.Set(formatAmount(v), true) end
+	end, "Only steal animals earning at least this per second (0 / empty = off)")
+
+	-- ===== Auto Sell (Extras tab) =====
+	-- Sells the animals in the backpack whose Rarity is chosen and whose income per second (ToolValue / 60) is BELOW the
+	-- entered value (equal or higher = kept). Nothing is sold until a Rarity is chosen AND a value is entered.
+	ST.Sell = { Running = false, Job = 0, Rarity = {}, Below = nil, Total = 0 }
+
+	local SELL_UNITS = { K = 1e3, M = 1e6, B = 1e9, T = 1e12, QA = 1e15, QI = 1e18, SX = 1e21, SP = 1e24, OC = 1e27, NO = 1e30, DC = 1e33 }
+	function ST.Sell.Parse(text)
+		if type(text) ~= "string" then
+			return nil
+		end
+		local num, suf = text:gsub(",", ""):match("^%s*([%d%.]+)%s*(%a*)%s*$")
+		local n = tonumber(num)
+		if not n then
+			return nil
+		end
+		if suf ~= "" then
+			local m = SELL_UNITS[suf:upper()]
+			if not m then
+				return nil
+			end
+			n = n * m
+		end
+		return n
+	end
+
+	function ST.Sell.Cfg()
+		if ST.Sell.cfg == nil then
+			local ok, m = pcall(function()
+				return require(ReplicatedStorage:WaitForChild("Shared", 10):WaitForChild("BackpackSellConfig", 10))
+			end)
+			ST.Sell.cfg = (ok and type(m) == "table") and m or false
+		end
+		return ST.Sell.cfg or nil
+	end
+
+	function ST.Sell.Step()
+		if next(ST.Sell.Rarity) == nil or not ST.Sell.Below then
+			return 0
+		end
+		local cfg = ST.Sell.Cfg()
+		local remote = ReplicatedStorage:FindFirstChild("BackpackSellRemote")
+		local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+		if not (cfg and remote and bp) then
+			return 0
+		end
+		local list = {}
+		for _, t in ipairs(game:GetService("CollectionService"):GetTagged("AnimalTool")) do
+			if t:IsDescendantOf(bp) then
+				local r = t:GetAttribute("Rarity")
+				if r and ST.Sell.Rarity[r] then
+					local okV, v = pcall(cfg.ToolValue, t)
+					local okS, sellable = pcall(cfg.IsSellable, t)
+					if okV and type(v) == "number" and v / 60 < ST.Sell.Below and okS and sellable then
+						list[#list + 1] = t
+					end
+				end
+			end
+		end
+		local sold = 0
+		for i = 1, #list, 200 do
+			if not ST.Sell.Running then
+				break
+			end
+			local batch = {}
+			for j = i, math.min(i + 199, #list) do
+				batch[#batch + 1] = list[j]
+			end
+			local ok, err = pcall(remote.InvokeServer, remote, batch)
+			if ok then
+				sold += #batch
+			else
+				warn("[LUNAR Hub] Auto Sell error: " .. tostring(err))
+			end
+			task.wait(0.5)
+		end
+		return sold
+	end
+
+	function ST.Sell.Stop()
+		ST.Sell.Running = false
+		ST.Sell.Job += 1
+	end
+
+	function ST.Sell.Start()
+		ST.Sell.Running = true
+		ST.Sell.Job += 1
+		local id = ST.Sell.Job
+		task.spawn(function()
+			while ST.Sell.Running and ST.Sell.Job == id do
+				local ok, n = pcall(ST.Sell.Step)
+				if ok and n and n > 0 then
+					ST.Sell.Total += n
+				elseif not ok then
+					warn("[LUNAR Hub] Auto Sell error: " .. tostring(n))
+				end
+				local t0 = os.clock()
+				while ST.Sell.Running and ST.Sell.Job == id and os.clock() - t0 < 3 do
+					task.wait(0.25)
+				end
+			end
+		end)
+	end
+
+	Section(Page2, "Auto Sell")
+	Toggle(Page2, "Auto Sell", false, function(on)
+		if on then
+			ST.Sell.Start()
+		else
+			ST.Sell.Stop()
+		end
+	end, nil, "Sells the animals in your backpack of the chosen Rarity that produce LESS income per second than the value below (equal or more is kept). Does nothing until a Rarity is chosen and a value is entered")
+	Dropdown(Page2, "Sell Rarity", {
+		Multi = true,
+		Options = STEAL_RARITIES,
+		Default = {},
+		Placeholder = "None",
+		Desc = "Tap to choose one or more. Nothing is sold while none is chosen",
+		OnChange = function(chosen)
+			ST.Sell.Rarity = toSet(chosen)
+		end,
+	})
+	_, ST.Sell.Input = TextInputCb(Page2, "Sell Only Below (income / s)", "", "e.g. 100B", function(text)
+		local v = nil
+		if type(text) == "string" and text:match("%S") then
+			v = ST.Sell.Parse(text)
+			if v == nil then
+				Notify("Invalid number", false)
+			end
+		end
+		ST.Sell.Below = v
+		if ST.Sell.Input and v then
+			ST.Sell.Input.Set(formatAmount(v), true)
+		end
+	end, "Animals that produce less income per second than this are sold, equal or more are kept (e.g. 100B = 100B/s). Empty = nothing is sold")
+
+	-- Auto Place Eggs: places the eggs you carry (the game keeps them as parent-less inventory items) into your own
+	-- garden at random spots. The garden is the Hitbox of the plot whose OwnerUserId is yours, so it follows you when the
+	-- plot changes (another Base_N, another server, an upgraded / wider plot). Kept in a do-block to save local slots.
+	do
+		local PE = { Running = false, Job = 0, Sent = 0, Tried = setmetatable({}, { __mode = "k" }), Twin = setmetatable({}, { __mode = "k" }), Speed = 100, Saved = {} } -- Speed: TP Walk speed to the plot (studs / second), fixed
+		local PE_MARGIN = 3 -- studs kept free from the edge of the garden
+
+		local function peAlive(id)
+			return PE.Running and PE.Job == id
+		end
+
+		local function myPlot()
+			local plots = Workspace:FindFirstChild("Plots")
+			if not plots then
+				return nil
+			end
+			local uid = LocalPlayer.UserId
+			for _, plot in ipairs(plots:GetChildren()) do
+				if tonumber(plot:GetAttribute("OwnerUserId")) == uid then
+					local hb = plot:FindFirstChild("Hitbox")
+					if hb and hb:IsA("BasePart") then
+						return plot, hb
+					end
+				end
+			end
+			return nil
+		end
+
+		-- random point inside the garden, on the floor
+		local function randomSpot(plot, hb)
+			local cf, size = hb.CFrame, hb.Size
+			local hx = math.max(size.X / 2 - PE_MARGIN, 0)
+			local hz = math.max(size.Z / 2 - PE_MARGIN, 0)
+			local lx = (math.random() * 2 - 1) * hx
+			local lz = (math.random() * 2 - 1) * hz
+			local top = cf:PointToWorldSpace(Vector3.new(lx, size.Y / 2, lz))
+			local y = hb.Position.Y - size.Y / 2 + 0.77 -- fallback height (same as a normal placement)
+			pcall(function()
+				local params = RaycastParams.new()
+				params.FilterType = Enum.RaycastFilterType.Exclude
+				local skip = { hb }
+				if LocalPlayer.Character then
+					table.insert(skip, LocalPlayer.Character)
+				end
+				local animals = plot:FindFirstChild("PlacedAnimals")
+				if animals then
+					table.insert(skip, animals)
+				end
+				params.FilterDescendantsInstances = skip
+				local hit = Workspace:Raycast(top, Vector3.new(0, -size.Y - 5, 0), params)
+				if hit then
+					y = hit.Position.Y + 0.19
+				end
+			end)
+			return Vector3.new(top.X, y, top.Z)
+		end
+
+		local NOT_EGG = { "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "LuaSourceContainer",
+			"GuiBase", "Sound", "Animation", "Attachment", "Decal", "Texture", "ParticleEmitter", "Weld", "Constraint" }
+
+		local function looksLikeEgg(o)
+			local ok, name = pcall(function()
+				return o.Name
+			end)
+			if not ok or type(name) ~= "string" or not name:lower():match("egg%s*$") then
+				return false
+			end
+			for _, c in ipairs(NOT_EGG) do
+				local isC = false
+				pcall(function()
+					isC = o:IsA(c)
+				end)
+				if isC then
+					return false
+				end
+			end
+			return true
+		end
+
+		-- eggs you carry: egg tools in your hand / backpack first, then parent-less inventory items named "... Egg"
+		local function findEggs()
+			local out, seen = {}, {}
+			local function add(o)
+				if o and not seen[o] and looksLikeEgg(o) then
+					local rec = PE.Tried[o]
+					if rec and rec.n >= 3 and os.clock() - rec.t < 30 then
+						return
+					end
+					if rec and rec.n >= 3 then
+						PE.Tried[o] = nil
+					end
+					seen[o] = true
+					out[#out + 1] = o
+				end
+			end
+			if LocalPlayer.Character then
+				for _, o in ipairs(LocalPlayer.Character:GetChildren()) do
+					if o:IsA("Tool") then
+						add(o)
+					end
+				end
+			end
+			local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+			if bp then
+				for _, o in ipairs(bp:GetChildren()) do
+					add(o)
+				end
+			end
+			local tools = #out
+			if type(getnilinstances) == "function" then
+				local ok, list = pcall(getnilinstances)
+				if ok and type(list) == "table" then
+					for _, o in ipairs(list) do
+						add(o)
+					end
+				end
+			end
+			return out, tools
+		end
+
+		-- hold the egg tool (the game places the egg you hold); true when it is in the hand
+		function PE.holdEgg(tool)
+			local char = LocalPlayer.Character
+			local hum = getHumanoid()
+			if not (char and hum) then
+				return false
+			end
+			if tool.Parent == char then
+				return true
+			end
+			pcall(function()
+				hum:EquipTool(tool)
+			end)
+			local t0 = os.clock()
+			while os.clock() - t0 < 1 do
+				if tool.Parent == char then
+					return true
+				end
+				RunService.Heartbeat:Wait()
+			end
+			return tool.Parent == char
+		end
+
+		-- the parent-less inventory item with the same name as a held egg tool, if the game made one
+		function PE.nilTwin(tool)
+			if type(getnilinstances) ~= "function" then
+				return nil
+			end
+			local ok, list = pcall(getnilinstances)
+			if ok and type(list) == "table" then
+				for _, o in ipairs(list) do
+					if o ~= tool and looksLikeEgg(o) and o.Name == tool.Name then
+						return o
+					end
+				end
+			end
+			return nil
+		end
+
+		function PE.usable(o)
+			local rec = PE.Tried[o]
+			return not (rec and rec.n >= 3 and os.clock() - rec.t < 30)
+		end
+
+		-- the egg tool that is already in the hand
+		function PE.heldEgg()
+			local c = LocalPlayer.Character
+			if c then
+				for _, o in ipairs(c:GetChildren()) do
+					if o:IsA("Tool") and looksLikeEgg(o) and PE.usable(o) then
+						return o
+					end
+				end
+			end
+			return nil
+		end
+
+		-- other systems that have priority (Auto Place Eggs steps aside for them)
+		function PE.blocked()
+			return ST.Working or ST.CE.Busy or GM.Working or TT.Working or evBlock()
+		end
+
+		-- the spot inside the garden that is closest to us, and whether we are already standing in the garden
+		function PE.target(hb, hrp)
+			local cf, size = hb.CFrame, hb.Size
+			local hx = math.max(size.X / 2 - 4, 0)
+			local hz = math.max(size.Z / 2 - 4, 0)
+			local lp = cf:PointToObjectSpace(hrp.Position)
+			local w = cf:PointToWorldSpace(Vector3.new(math.clamp(lp.X, -hx, hx), 0, math.clamp(lp.Z, -hz, hz)))
+			local target = Vector3.new(w.X, hb.Position.Y - size.Y / 2 + 3, w.Z)
+			local flat = Vector3.new(target.X - hrp.Position.X, 0, target.Z - hrp.Position.Z).Magnitude
+			return target, flat <= 2 and math.abs(target.Y - hrp.Position.Y) <= 8
+		end
+
+		-- TP Walk to the plot at a fixed speed (collisions off while walking so walls do not stop us)
+				function PE.restore()
+			for p, v in pairs(PE.Saved) do
+				if p and p.Parent then
+					p.CanCollide = v
+				end
+			end
+			table.clear(PE.Saved)
+		end
+
+		function PE.walk(id, target)
+			local char = LocalPlayer.Character
+			local hrp = getHRP()
+			if not (char and hrp) then
+				return false
+			end
+			local parts = {}
+			for _, p in ipairs(char:GetDescendants()) do
+				if p:IsA("BasePart") then
+					parts[#parts + 1] = p
+				end
+			end
+			local t0 = os.clock()
+			local timeout = (target - hrp.Position).Magnitude / PE.Speed * 3 + 5
+			local arrived = false
+			while peAlive(id) do
+				hrp = getHRP()
+				if not hrp or PE.blocked() or os.clock() - t0 > timeout then
+					break
+				end
+				local off = target - hrp.Position
+				if off.Magnitude <= 1.5 then
+					arrived = true
+					break
+				end
+				local dt = math.min(RunService.Heartbeat:Wait(), 0.05)
+				for _, p in ipairs(parts) do
+					if p.Parent then
+						if PE.Saved[p] == nil then
+							PE.Saved[p] = p.CanCollide
+						end
+						p.CanCollide = false
+					end
+				end
+				local np = hrp.Position + off.Unit * math.min(PE.Speed * dt, off.Magnitude)
+				if Vector3.new(off.X, 0, off.Z).Magnitude > 0.05 then
+					hrp.CFrame = CFrame.new(np, np + Vector3.new(off.X, 0, off.Z))
+				else
+					hrp.CFrame = CFrame.new(np)
+				end
+				hrp.AssemblyLinearVelocity = Vector3.zero
+			end
+			PE.restore()
+			return arrived
+		end
+
+		-- inside the garden: keep TP-walking (fixed speed) between random waypoints while the eggs are fired,
+		-- so the eggs end up spread over the whole garden
+		function PE.roam(hb)
+			local char = LocalPlayer.Character
+			local hrp = getHRP()
+			if not (char and hrp) then
+				return
+			end
+			local now = os.clock()
+			local dt = math.min(now - (PE.LastT or now), 0.05)
+			PE.LastT = now
+			local cf, size = hb.CFrame, hb.Size
+			local standY = hb.Position.Y - size.Y / 2 + 3
+			local way = PE.Way
+			if way and Vector3.new(way.X - hrp.Position.X, 0, way.Z - hrp.Position.Z).Magnitude <= 1.5 then
+				way = nil
+			end
+			if not way then
+				local hx = math.max(size.X / 2 - 4, 0)
+				local hz = math.max(size.Z / 2 - 4, 0)
+				local w = cf:PointToWorldSpace(Vector3.new((math.random() * 2 - 1) * hx, 0, (math.random() * 2 - 1) * hz))
+				way = Vector3.new(w.X, standY, w.Z)
+				PE.Way = way
+			end
+			if PE.PartsChar ~= char or now - (PE.PartsAt or 0) > 0.5 then
+				PE.PartsChar, PE.PartsAt, PE.Parts = char, now, {}
+				for _, p in ipairs(char:GetDescendants()) do
+					if p:IsA("BasePart") then
+						PE.Parts[#PE.Parts + 1] = p
+					end
+				end
+			end
+			for _, p in ipairs(PE.Parts) do
+				if p.Parent then
+					if PE.Saved[p] == nil then
+						PE.Saved[p] = p.CanCollide
+					end
+					p.CanCollide = false
+				end
+			end
+			local off = Vector3.new(way.X - hrp.Position.X, 0, way.Z - hrp.Position.Z)
+			if off.Magnitude > 0.05 and dt > 0 then
+				local np = hrp.Position + off.Unit * math.min(PE.Speed * dt, off.Magnitude)
+				np = Vector3.new(np.X, standY, np.Z)
+				hrp.CFrame = CFrame.new(np, np + off)
+				hrp.AssemblyLinearVelocity = Vector3.zero
+			end
+		end
+
+		-- nothing to place / stepping aside: let Auto Break & co. work again
+		function PE.Release()
+			PE.restore()
+			PE.Way, PE.LastT = nil, nil
+			SW.PEBusy = false
+			SW.PlacingEgg = false
+		end
+
+		-- one frame of work: find an egg -> walk to the plot -> hold it -> fire PlaceEgg. No messages, no waits.
+		function PE.Step(id)
+			local plot, hb = myPlot()
+			local remote = ReplicatedStorage:FindFirstChild("MergeMachineRemote")
+			if not hb or not remote or PE.blocked() then
+				PE.Release()
+				return false
+			end
+			local egg = PE.heldEgg()
+			if not egg then
+				egg = findEggs()[1]
+				if not egg then
+					PE.Release()
+					return false
+				end
+			end
+			SW.PEBusy = true
+			local hrp = getHRP()
+			if not hrp then
+				return false
+			end
+			local target, inside = PE.target(hb, hrp)
+			if not inside then
+				PE.walk(id, target)
+				return true
+			end
+			local arg = egg
+			local rec = PE.Tried[egg] or { n = 0, t = 0, f = 0 }
+			if egg:IsA("Tool") then
+				SW.PlacingEgg = true
+				if egg.Parent ~= LocalPlayer.Character and not PE.holdEgg(egg) then
+					rec.n += 1
+					rec.t = os.clock()
+					PE.Tried[egg] = rec
+					return false
+				end
+				local tw = PE.Twin[egg]
+				if not tw or os.clock() - tw.t > 0.5 then
+					tw = { v = PE.nilTwin(egg), t = os.clock() }
+					PE.Twin[egg] = tw
+				end
+				arg = tw.v or egg
+			end
+			PE.roam(hb) -- TP Walk to the next random waypoint in the garden, then shoot
+			-- safety: one egg that never goes away after a lot of shots is skipped for a while
+			rec.f = (rec.f or 0) + 1
+			if rec.f > 300 then
+				rec.n, rec.t, rec.f = 3, os.clock(), 0
+			end
+			PE.Tried[egg] = rec
+			local pos = randomSpot(plot, hb)
+			local ok, err = pcall(function()
+				remote:FireServer("PlaceEgg", arg, pos)
+			end)
+			if ok then
+				PE.Sent += 1
+			else
+				warn("[LUNAR Hub] Auto Place Eggs error: " .. tostring(err))
+			end
+			return true
+		end
+
+		function PE.Stop()
+			PE.Running = false
+			PE.Job += 1
+			PE.Release()
+		end
+
+		function PE.Start()
+			PE.Running = true
+			PE.Job += 1
+			local id = PE.Job
+			task.spawn(function()
+				while peAlive(id) do
+					local ok, did = pcall(PE.Step, id)
+					if not ok then
+						warn("[LUNAR Hub] Auto Place Eggs error: " .. tostring(did))
+						PE.Release()
+						task.wait(1)
+					elseif did then
+						RunService.Heartbeat:Wait() -- working: next shot on the very next frame
+					else
+						-- nothing to place right now: look again in a moment
+						local t0 = os.clock()
+						while peAlive(id) and os.clock() - t0 < 0.25 do
+							RunService.Heartbeat:Wait()
+						end
+					end
+				end
+			end)
+		end
+
+		SW.PEStart = PE.Start
+		SW.PEStop = PE.Stop
+		addCleanup(PE.Stop)
+	end
+
+	addCleanup(function()
+		ST.Sell.Stop()
+		ST.CE.Stop()
+	end)
+
 	addCleanup(function()
 		swStop()
 		stStop()
@@ -5296,8 +5706,20 @@ local TRANSLATIONS = {
 	{ en = "Auto Treadmill", th = "ลู่วิ่งอัตโนมัติ" },
 	{ en = "Auto Extras", th = "ระบบเสริมอัตโนมัติ" },
 	{ en = "Auto Equip Best Pets", th = "สวมใส่สัตว์ที่ดีที่สุดอัตโนมัติ" },
+	{ en = "Extras", th = "ระบบเสริม" },
 	{ en = "Auto Carry Escape", th = "วาปหนีเมื่อถือสัตว์" },
-	{ en = "Noclip all the time while ON. When you carry a new animal: if you are far from zone 1/2 you teleport to zone 1 first (guard hit), then TP Walk at speed 300 through the wall to the escape spot and stop there. Carrying the same animal again does nothing. Works behind Auto Steal", th = "เปิด noclip ตลอดเวลาที่เปิดอยู่ เมื่อถือสัตว์ตัวใหม่ ถ้าอยู่ไกลจากโซน 1/2 จะวาปไปโซน 1 ก่อน (ให้การ์ดตี) แล้ว TP Walk ความเร็ว 300 ทะลุกำแพงไปที่จุดหนีแล้วหยุด ถ้าเป็นสัตว์ตัวเดิมจะไม่ทำซ้ำ ทำงานหลัง Auto Steal" },
+	{ en = "Carry Escape Rarity", th = "ความหายากของวาปหนี" },
+	{ en = "Carry Escape Min Income / s", th = "รายได้ขั้นต่ำ / วินาที ของวาปหนี" },
+	{ en = "Finds animals by itself (its own Rarity / Min Income), steals them and teleports to the escape spot outside the map instead of the Safe Zone. Noclip while ON. Turns Auto Steal OFF (they share the same loop)", th = "หาสัตว์เอง (ใช้ความหายากและรายได้ขั้นต่ำของตัวเอง) ขโมยแล้ววาปไปจุดหนีนอกแมพแทนโซนปลอดภัย เปิด noclip ตลอดที่เปิดอยู่ จะปิด Auto Steal (ใช้ลูปเดียวกัน)" },
+	{ en = "Auto Sell", th = "ขายอัตโนมัติ" },
+	{ en = "Auto Place Eggs", th = "วางไข่อัตโนมัติ" },
+	{ en = "Your plot was not found", th = "ไม่พบพล็อตของคุณ" },
+	{ en = "Walks to your plot (TP Walk, speed 100), holds each egg you carry and keeps placing eggs at random spots while it keeps TP-walking around your garden, with no delay and no messages. Pauses while Auto Steal / a Hell Event is working", th = "เดินไปที่พล็อตของคุณ (TP Walk ความเร็ว 100) ถือไข่แล้วยิงวางรัวแบบสุ่มตำแหน่ง พร้อมเดิน TP Walk วนไปทั่วสวนตลอด ไม่มีดีเลย์และไม่มีข้อความแจ้งเตือน หยุดชั่วคราวเมื่อ Auto Steal หรือ Hell Event กำลังทำงาน" },
+	{ en = "Sell Rarity", th = "ความหายากที่จะขาย" },
+	{ en = "Sell Only Below (income / s)", th = "ขายเฉพาะที่รายได้ต่ำกว่า (/วินาที)" },
+	{ en = "Sells the animals in your backpack of the chosen Rarity that produce LESS income per second than the value below (equal or more is kept). Does nothing until a Rarity is chosen and a value is entered", th = "ขายสัตว์ในกระเป๋าที่เป็นความหายากที่เลือกและผลิตรายได้ต่อวินาทีต่ำกว่าค่าด้านล่าง (เท่ากับหรือมากกว่าจะเก็บไว้) ไม่ทำอะไรจนกว่าจะเลือกความหายากและกรอกค่า" },
+	{ en = "Animals that produce less income per second than this are sold, equal or more are kept (e.g. 100B = 100B/s). Empty = nothing is sold", th = "สัตว์ที่ผลิตรายได้ต่อวินาทีต่ำกว่าค่านี้จะถูกขาย เท่ากับหรือมากกว่าจะเก็บไว้ (เช่น 100B = 100B ต่อวินาที) ว่าง = ไม่ขายอะไร" },
+	{ en = "Tap to choose one or more. Nothing is sold while none is chosen", th = "แตะเพื่อเลือกอย่างน้อยหนึ่งอย่าง ถ้าไม่เลือกจะไม่ขายอะไร" },
 	{ en = "Equips your best pets once after every successful steal, after a random 1 - 5 second delay", th = "ใส่สัตว์ที่ดีที่สุดหนึ่งครั้งหลังขโมยสำเร็จทุกครั้ง โดยหน่วงสุ่ม 1 - 5 วินาที" },
 	{ en = "Equipped best pets", th = "สวมใส่สัตว์ที่ดีที่สุดแล้ว" },
 	{ en = "Pet remote not found", th = "ไม่พบ remote ของสัตว์" },
