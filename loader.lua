@@ -131,9 +131,17 @@ local function findGame(data)
 	end
 end
 
+-- executor check
+if type(loadstring) ~= "function" then
+	warn("[LUNAR GameLoader] executor ไม่รองรับ loadstring")
+	notify("executor ไม่รองรับ loadstring", 8)
+	return
+end
+
 local data, err = readGameJson()
 if not data then
 	warn("[LUNAR GameLoader] " .. tostring(err))
+	notify("โหลด Game.json ไม่สำเร็จ", 8)
 	return
 end
 
@@ -147,6 +155,7 @@ end
 local url = entry.Script
 if type(url) ~= "string" or url == "" then
 	warn("[LUNAR GameLoader] Entry has no Script: " .. tostring(entry.Name))
+	notify("ไม่พบลิงก์สคริปต์ของแมพนี้", 8)
 	return
 end
 if not url:match("^https?://") then
@@ -174,21 +183,21 @@ notify("แมพ: " .. tostring(entry.Name))
 local source = httpGet(url)
 if not source then
 	warn("[LUNAR GameLoader] โหลดสคริปต์ไม่สำเร็จ: " .. url)
-	notify("โหลดสคริปต์ไม่สำเร็จ")
+	notify("โหลดสคริปต์ไม่สำเร็จ", 8)
 	return
 end
 
 local fn, cerr = loadstring(source, "=" .. tostring(entry.Name or "LunarScript"))
 if not fn then
 	warn("[LUNAR GameLoader] Script compile error: " .. tostring(cerr))
-	notify("รันสคริปต์ไม่สำเร็จ")
+	notify("คอมไพล์ไม่สำเร็จ: " .. tostring(cerr):sub(1, 80), 8)
 	return
 end
 
 local ok, result = pcall(fn)
 if not ok then
 	warn("[LUNAR GameLoader] Script error: " .. tostring(result))
-	notify("รันสคริปต์ไม่สำเร็จ")
+	notify("รันไม่สำเร็จ: " .. tostring(result):sub(1, 80), 8)
 	return
 end
 
