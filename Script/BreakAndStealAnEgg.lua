@@ -16,10 +16,6 @@ local CONFIG = {
 	PlaceIds = {},
 	GameName = nil,
 
-	-- Config/settings namespace. Each distinct Id gets its own save files
-	-- (LunarHub_Settings_<Id>.json, LunarHub/configs/<Id>/*.json), so running
-	-- this loader in two different games never mixes their saved configs.
-	-- Leave nil to auto-use the current PlaceId.
 	Id = nil,
 }
 
@@ -238,8 +234,7 @@ function Stats.ViewClone(inst)
 	if typeof(inst) ~= "Instance" then
 		return nil
 	end
-	-- Some game models are Archivable = false (or have non-archivable children). Clone() then
-	-- returns nil or skips them, which is what caused the "?" / empty icons. Unlock, clone, restore.
+
 	local flipped = {}
 	local function unlock(i)
 		local okA, a = pcall(function()
@@ -314,7 +309,7 @@ function Stats.ViewClone(inst)
 	end
 	for _, pt in ipairs(parts) do
 		pt.Anchored = true
-		-- invisible hitboxes make the camera frame far too wide (tiny / empty icon)
+
 		if visible > 0 and pt ~= c and pt.Transparency >= 0.95 then
 			pcall(function()
 				pt:Destroy()
@@ -434,7 +429,7 @@ local FarmSystem = {
 	end
 
 	local TMX = { Exit = function() end }
-	-- shared Teleport move mode for Auto Break / Auto Titanic Egg (filled in after tpReach)
+
 	local TPX = {}
 
 	local function getHRP()
@@ -447,9 +442,6 @@ local FarmSystem = {
 		return c and c:FindFirstChildOfClass("Humanoid")
 	end
 
-	-- Real walking (same method as Auto Collect Gems): Humanoid:Move() is applied from a RenderStep that runs AFTER the
-	-- game's own controls (they call Move(0) every frame), Humanoid:MoveTo is the backup, and the character jumps when
-	-- stuck. The speed is the game's own WalkSpeed. Used by Auto Break, Titanic Egg and every walking leg of Auto Steal.
 	local realWalk
 	do
 	local RW_BIND = "LunarRealWalk"
@@ -460,10 +452,11 @@ local FarmSystem = {
 			return
 		end
 		RW.Bound = true
-		pcall(function()
-			RunService:UnbindFromRenderStep(RW_BIND)
-		end)
-		RunService:BindToRenderStep(RW_BIND, 2000, function()
+		if RW.Conn then
+			RW.Conn:Disconnect()
+			RW.Conn = nil
+		end
+		RW.Conn = RunService.Stepped:Connect(function()
 			local t = RW.Target
 			if not t then
 				return
@@ -487,9 +480,10 @@ local FarmSystem = {
 			return
 		end
 		RW.Bound = false
-		pcall(function()
-			RunService:UnbindFromRenderStep(RW_BIND)
-		end)
+		if RW.Conn then
+			RW.Conn:Disconnect()
+			RW.Conn = nil
+		end
 		local h, r = getHumanoid(), getHRP()
 		if h then
 			pcall(function()
@@ -504,7 +498,6 @@ local FarmSystem = {
 	end
 	addCleanup(rwHalt)
 
-	-- target: Vector3 or a function returning Vector3 / nil. Returns true when within `stop` studs (flat distance).
 	function realWalk(target, stop, alive, abortFn, abortEvery)
 		local function resolve()
 			if type(target) == "function" then
@@ -552,7 +545,7 @@ local FarmSystem = {
 					hum:MoveTo(p)
 				end)
 			end
-			-- stuck check: not moving while still away from the target -> jump, give up after 4 tries
+
 			if not lastPos or (hrp.Position - lastPos).Magnitude > 0.4 then
 				lastPos, lastMoved = hrp.Position, now
 			elseif now - lastMoved > 0.7 then
@@ -571,7 +564,7 @@ local FarmSystem = {
 		return result
 	end
 
-	end -- /do
+	end
 	local function toSet(list)
 		local t = {}
 		for _, v in ipairs(list or {}) do
@@ -581,7 +574,7 @@ local FarmSystem = {
 	end
 
 	local function StatusCard(parent, initial)
-		return function() end -- status label removed
+		return function() end
 	end
 
 	local SW, ST, TT, GM
@@ -911,7 +904,7 @@ local FarmSystem = {
 
 	function equipPickaxe()
 		if SW.PlacingEgg then
-			return true -- Auto Place Eggs is holding an egg right now: do not swap it for the pickaxe
+			return true
 		end
 		local char = LocalPlayer.Character
 		local hum = getHumanoid()
@@ -963,6 +956,93 @@ local FarmSystem = {
 			btn = findSwingBtn()
 		end
 		return btn
+	end
+
+	local SPY = ENV.LunarSwingSpy
+	if type(SPY) ~= "table" then
+		SPY = { Last = 0, Hooked = false, Installed = false }
+		ENV.LunarSwingSpy = SPY
+	end
+	if not SPY.Installed and type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
+		SPY.Installed = true
+		local wrapFn = type(newcclosure) == "function" and newcclosure or function(f)
+			return f
+		end
+		local oldNamecall
+		local okHook = pcall(function()
+			oldNamecall = hookmetamethod(game, "__namecall", wrapFn(function(self, ...)
+				local m = getnamecallmethod()
+				if (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance" then
+					local n = self.Name
+					if n == "MasteryPickaxeSwing" or n == "EggHitRequest" then
+						SPY.Last = os.clock()
+					end
+				end
+				return oldNamecall(self, ...)
+			end))
+		end)
+		SPY.Hooked = okHook and oldNamecall ~= nil
+	end
+
+	local function swingEvidence()
+		if SPY.Hooked and os.clock() - SPY.Last <= 1.5 then
+			return true
+		end
+		if os.clock() - (SW.HpDropAt or 0) <= 1.5 then
+			return true
+		end
+		if not SPY.Hooked and not SW.HpSeen then
+			return true
+		end
+		return false
+	end
+
+	local function swRestartSwing()
+		pcall(setGameSwing, false)
+		task.wait(0.35)
+		pcall(setSwingEventState, false)
+		SW.EvtState = nil
+		SW.Assumed = nil
+		reequipPickaxe()
+		enableGameSwing()
+		local c = LocalPlayer.Character
+		local tool = c and c:FindFirstChildOfClass("Tool")
+		if tool and isPickaxe(tool) then
+			pcall(function()
+				tool:Activate()
+			end)
+		end
+	end
+
+	local function swWatchdog(id)
+		local lastPos, lastMoved = nil, os.clock()
+		while swAlive(id) do
+			task.wait(0.5)
+			local hrp = getHRP()
+			if hrp and SW.Working and not breakBlocked() and not SW.Yielded then
+				local now = os.clock()
+				if not lastPos or (hrp.Position - lastPos).Magnitude > 1.5 then
+					lastPos, lastMoved = hrp.Position, now
+				elseif now - lastMoved > 6 then
+					local hitting = SW.CurPart ~= nil and eggAlive(SW.CurPart) and swingEvidence()
+					if not hitting then
+						lastMoved = now
+						local hum = getHumanoid()
+						if hum then
+							pcall(function()
+								hum:ChangeState(Enum.HumanoidStateType.Jumping)
+							end)
+						end
+						if SW.CurPart then
+							SW.Skip[SW.CurPart] = now + 15
+						end
+						setSwStatus("Standing still -> skipping the current target")
+					end
+				end
+			else
+				lastPos, lastMoved = nil, os.clock()
+			end
+		end
 	end
 
 	function eggRarity(model)
@@ -1048,7 +1128,7 @@ local FarmSystem = {
 				end
 				return a.dist < b.dist
 			end
-			-- Largest first (default)
+
 			if a.size ~= b.size then
 				return a.size > b.size
 			end
@@ -1093,7 +1173,7 @@ local FarmSystem = {
 				stop = SW_STOP,
 				say = setSwStatus,
 				alive = function()
-					return swAlive(id) and not breakBlocked() and eggAlive(part)
+					return swAlive(id) and not breakBlocked() and eggAlive(part) and not (SW.Skip[part] and SW.Skip[part] > os.clock())
 				end,
 			})
 			if done then
@@ -1103,28 +1183,24 @@ local FarmSystem = {
 		local ok = realWalk(function()
 			return part.Parent and part.Position or nil
 		end, SW_STOP, function()
-			return swAlive(id) and not breakBlocked() and eggAlive(part)
+			return swAlive(id) and not breakBlocked() and eggAlive(part) and not (SW.Skip[part] and SW.Skip[part] > os.clock())
 		end)
 		if not ok and swAlive(id) and not breakBlocked() and eggAlive(part) then
-			SW.Skip[part] = os.clock() + 10 -- could not reach it (stuck / too long): skip this egg for 10s
+			SW.Skip[part] = os.clock() + 10
 		end
 		return ok
 	end
 
-	-- Divine zone = the zone where the Divine eggs spawn (zone 7, from the game dump)
 	local DIVINE_ZONE = 7
 	local DIVINE_POS = Vector3.new(-1565.5, 3.693, 0)
 	local DIVINE_X = { -1819.5, -1311.5 }
 
-	-- zones where each egg rarity spawns (from the game dump)
 	local RARITY_ZONES = {
 		Common = { 1 }, Uncommon = { 2 }, Rare = { 3 }, Epic = { 4 }, Legendary = { 5 }, Mythic = { 6 },
 		Divine = { 7 }, Cosmic = { 8 }, Secret = { 9 }, Celestial = { 10 }, Inferno = { 7, 11 },
 		Void = { 7, 12 }, Omega = { 7, 12, 13 }, Spectral = { 12, 13 }, Ethereal = { 13 },
 	}
 
-	-- true when the far zones (beyond the Divine zone) that can hold the chosen rarities are loaded, i.e. their
-	-- Eggs folder exists AND already has eggs in it. A far zone that is not streamed in has no folder / no eggs.
 	local function swFarMapLoaded()
 		local build = Workspace:FindFirstChild("Build")
 		local zb = build and build:FindFirstChild("ZoneBuilds")
@@ -1143,7 +1219,7 @@ local FarmSystem = {
 				end
 			end
 		end
-		-- keep only the zones where a chosen rarity really spawns
+
 		local need = {}
 		for rar, on in pairs(SW.Rarity) do
 			if on then
@@ -1171,9 +1247,6 @@ local FarmSystem = {
 		return true
 	end
 
-	-- true when a chosen zone is beyond the Divine zone, its map is NOT loaded and we are not in the Divine zone yet.
-	-- Only asked when NO egg of the chosen zones is in sight. If the map is loaded (or a far egg is in sight) we never
-	-- go to the Divine zone.
 	local function swNeedDivineStop()
 		local far = false
 		for z in pairs(SW.Zone) do
@@ -1213,7 +1286,6 @@ local FarmSystem = {
 		return realWalk(pos, 8, alive)
 	end
 
-	-- counts a broken egg exactly once, however the loop noticed it
 	local function swCountEgg(e)
 		if e and e.part and not eggAlive(e.part) and not Stats.Seen[e.part] then
 			Stats.Seen[e.part] = true
@@ -1224,7 +1296,6 @@ local FarmSystem = {
 		end
 	end
 
-	-- eggs we went for but did not see break (the loop was interrupted, the egg died while walking...)
 	local function swSweepPending()
 		for part, rec in pairs(SW.Pending) do
 			if os.clock() - rec.t > 45 then
@@ -1236,11 +1307,54 @@ local FarmSystem = {
 		end
 	end
 
+	local SW_ZONE_X = {
+		[1] = { -174.5, -81.5 }, [2] = { -304.0, -187.0 }, [3] = { -463.2, -315.8 },
+		[4] = { -681.8, -475.2 }, [5] = { -960.8, -694.2 }, [6] = { -1299.8, -973.2 },
+		[7] = { -1819.5, -1311.5 }, [8] = { -2338.0, -1831.0 }, [9] = { -2863.0, -2350.0 },
+		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 },
+	}
+
+	local function swPatrol(id)
+		local want = {}
+		for rar, on in pairs(SW.Rarity) do
+			if on then
+				local zs = RARITY_ZONES[rar]
+				if zs then
+					for _, z in ipairs(zs) do
+						want[z] = true
+					end
+				else
+					for z = 1, 13 do
+						want[z] = true
+					end
+				end
+			end
+		end
+		local zl = {}
+		for z = 1, 13 do
+			if (next(SW.Zone) == nil or SW.Zone[z]) and want[z] then
+				zl[#zl + 1] = z
+			end
+		end
+		if #zl == 0 then
+			return
+		end
+		SW.PatrolIdx = (SW.PatrolIdx or 0) % #zl + 1
+		local z = zl[SW.PatrolIdx]
+		local rng = SW_ZONE_X[z]
+		SW.Working = true
+		TMX.Exit()
+		setSwStatus("Nothing to break here -> checking zone " .. z)
+		swGoTo(Vector3.new((rng[1] + rng[2]) / 2, 3.693, 0), id)
+		SW.Working = false
+	end
+
 	local function breakLoop(id)
 		local lastEquip = 0
 		reequipPickaxe()
 		enableGameSwing()
 		task.spawn(monitorSwing, id)
+		task.spawn(swWatchdog, id)
 		while swAlive(id) do
 			if breakBlocked() then
 				SW.Working = false
@@ -1305,27 +1419,63 @@ local FarmSystem = {
 					swGoTo(DIVINE_POS, id)
 					SW.DivineAt = os.clock() + 4
 					task.wait(0.5)
-				elseif not e then
-					SW.Working = false
-					setSwStatus("No matching egg found, scanning...")
-					task.wait(0.5)
-				else
-					SW.Working = true
-					TMX.Exit()
-					Stats.SnapEgg(e)
-					SW.Pending[e.part] = { e = e, t = os.clock() }
-					setSwStatus("Walking to egg (size " .. e.size .. ")")
-					if swWalkTo(e.part, id) then
-						setSwStatus("Breaking egg")
-						while swAlive(id) and not breakBlocked() and eggAlive(e.part) do
-							local r = getHRP()
-							if r and Vector3.new(e.part.Position.X - r.Position.X, 0, e.part.Position.Z - r.Position.Z).Magnitude > SW_STOP * 4 then
-								break
-							end
-							task.wait(0.3)
+					elseif not e then
+						SW.Working = false
+						SW.CurPart = nil
+						SW.NoEggSince = SW.NoEggSince or os.clock()
+						if os.clock() - SW.NoEggSince > 20 then
+							swPatrol(id)
+							SW.NoEggSince = os.clock() - 12
+						else
+							setSwStatus("No matching egg found, scanning...")
+							task.wait(0.5)
 						end
-					end
-					swCountEgg(e)
+					else
+						SW.NoEggSince = nil
+						SW.Working = true
+						TMX.Exit()
+						Stats.SnapEgg(e)
+						SW.Pending[e.part] = { e = e, t = os.clock() }
+						SW.CurPart = e.part
+						setSwStatus("Walking to egg (size " .. e.size .. ")")
+						if swWalkTo(e.part, id) then
+							setSwStatus("Breaking egg")
+							local hitStart, lastFix, fixes = os.clock(), 0, 0
+							local lastHp = tonumber(e.part:GetAttribute("Health"))
+							SW.HpDropAt = 0
+							if lastHp then
+								SW.HpSeen = true
+							end
+							while swAlive(id) and not breakBlocked() and eggAlive(e.part) and not (SW.Skip[e.part] and SW.Skip[e.part] > os.clock()) do
+								local r = getHRP()
+								if r and Vector3.new(e.part.Position.X - r.Position.X, 0, e.part.Position.Z - r.Position.Z).Magnitude > SW_STOP * 4 then
+									break
+								end
+								local now = os.clock()
+								local hp = tonumber(e.part:GetAttribute("Health"))
+								if hp then
+									SW.HpSeen = true
+									if lastHp and hp < lastHp then
+										SW.HpDropAt = now
+									end
+									lastHp = hp
+								end
+
+								if now - hitStart > 1.5 and not swingEvidence() and now - lastFix > 3 then
+									lastFix = now
+									fixes += 1
+									setSwStatus("No swing detected -> restarting AutoSwing")
+									swRestartSwing()
+									if fixes >= 4 then
+										SW.Skip[e.part] = os.clock() + 20
+										break
+									end
+								end
+								task.wait(0.3)
+							end
+						end
+						swCountEgg(e)
+						SW.CurPart = nil
 				end
 				task.wait()
 			end
@@ -1384,7 +1534,7 @@ local FarmSystem = {
 		return true
 	end
 
-	end -- /do
+	end
 	local setTtStatus, ttStop, ttStart
 	do
 
@@ -1651,11 +1801,8 @@ local FarmSystem = {
 		return true
 	end
 
-
-	-- (kept inside a do-block so it does not use up local-variable slots)
 	do
-		-- Auto Collect Gems: gems drop on the ground in Workspace.EggGemDrops and are collected by touching them.
-		-- Priority (high -> low): Auto Steal > Auto Collect Gems > Titanic Egg > Auto Break > Auto Treadmill
+
 		local function gmAlive(id)
 			return GM.Running and GM.Job == id
 		end
@@ -1695,6 +1842,7 @@ local FarmSystem = {
 		local gmSkip = setmetatable({}, { __mode = "k" })
 		local gmStuck = 0
 		local GM_BIND = "LunarGemWalk"
+			local GM_CONN = nil
 
 		local function nextGem(from)
 			local root = Workspace:FindFirstChild("EggGemDrops")
@@ -1714,24 +1862,20 @@ local FarmSystem = {
 			return best
 		end
 
-			-- Real walking at the game's own WalkSpeed (no CFrame / teleport): walk to the nearest gem until it disappears,
-			-- then pick the next nearest one. The game's default controls call Humanoid:Move(0) every frame and would cancel
-			-- our movement, so Humanoid:Move() is applied from a RenderStep that runs AFTER them (priority 2000),
-			-- with Humanoid:MoveTo as a backup. A gem we cannot reach (stuck / too long) is skipped for 10s.
-			-- No gem left -> idle (GM.Working = false so Auto Break etc. can run) and resume when a new gem drops.
 			local function gemLoop(id)
 				local moving = false
-				local target = nil -- Vector3 the render step walks toward (nil = do nothing)
+				local target = nil
 				local bound = false
 				local function bindWalk()
 					if bound then
 						return
 					end
 					bound = true
-					pcall(function()
-						RunService:UnbindFromRenderStep(GM_BIND)
-					end)
-					RunService:BindToRenderStep(GM_BIND, 2000, function()
+					if GM_CONN then
+						GM_CONN:Disconnect()
+						GM_CONN = nil
+					end
+					GM_CONN = RunService.Stepped:Connect(function()
 						local t = target
 						if not t then
 							return
@@ -1752,9 +1896,10 @@ local FarmSystem = {
 					target = nil
 					if bound then
 						bound = false
-						pcall(function()
-							RunService:UnbindFromRenderStep(GM_BIND)
-						end)
+						if GM_CONN then
+							GM_CONN:Disconnect()
+							GM_CONN = nil
+						end
 					end
 					if not moving then
 						return
@@ -1799,14 +1944,14 @@ local FarmSystem = {
 								target = p
 								moving = true
 								bindWalk()
-								-- backup: MoveTo times out after 8s, so re-issue it regularly
+
 								if now - lastMove >= 0.25 then
 									lastMove = now
 									pcall(function()
 										hum:MoveTo(p)
 									end)
 								end
-								-- stuck check: not moving while still away from the gem -> jump, then give up on this gem
+
 								if dist < 1.5 or not lastPos or (hrp.Position - lastPos).Magnitude > 0.4 then
 									lastPos, lastMoved = hrp.Position, now
 								elseif now - lastMoved > 0.7 then
@@ -1838,9 +1983,10 @@ local FarmSystem = {
 			GM.Running = false
 			GM.Job += 1
 			GM.Working = false
-			pcall(function()
-				RunService:UnbindFromRenderStep(GM_BIND)
-			end)
+			if GM_CONN then
+				GM_CONN:Disconnect()
+				GM_CONN = nil
+			end
 		end
 
 		function GM.Start()
@@ -1862,7 +2008,7 @@ local FarmSystem = {
 		end
 	end
 
-	end -- /do
+	end
 	local TM = { Running = false, Job = 0, Speed = 150, Margin = 7, GroundY = 3.693 }
 	local setTmStatus, setEqStatus
 
@@ -2016,8 +2162,6 @@ local FarmSystem = {
 		end
 	end
 
-	-- Auto Equip Best Pets: when ON, fires the game's PetsInventoryRemote("EquipBest") once after every successful
-	-- steal, after a random 1 - 5 second delay (EQ.Kick is called from Auto Steal).
 	local EQ = { Running = false, Job = 0, Pending = false }
 
 	function EQ.Stop(msg)
@@ -2265,7 +2409,6 @@ local FarmSystem = {
 				ZIndex = 3,
 			}, Root)
 
-			-- top-right: small running-time counter + small close button
 			local Pill = New("Frame", {
 				AnchorPoint = Vector2.new(1, 0),
 				Position = UDim2.new(1, -12, 0, 12),
@@ -2299,7 +2442,7 @@ local FarmSystem = {
 				ZIndex = 9,
 			}, Pill)
 			Corner(Close, 8)
-			-- draw the X with two rotated bars (font glyphs for ✕ may not render)
+
 			for _, rot in ipairs({ 45, -45 }) do
 				New("Frame", {
 					AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2312,7 +2455,7 @@ local FarmSystem = {
 				}, Close)
 			end
 			local function closeAfk()
-				-- close directly (never depends on the toggle callback), then sync the switch silently
+
 				if afkOffFn then
 					local ok, err = pcall(afkOffFn)
 					if not ok then
@@ -2333,7 +2476,6 @@ local FarmSystem = {
 				end
 			end))
 
-			-- centre column: logo, title, stat cards, mutation chips, system status
 			local Center = New("Frame", {
 				AnchorPoint = Vector2.new(0.5, 0.5),
 				Position = UDim2.fromScale(0.5, 0.5),
@@ -2667,7 +2809,7 @@ local FarmSystem = {
 			if okb and cf0 and size0 and size0.Magnitude > 0 then
 				cf, size = cf0, size0
 			else
-				-- fallback: measure the parts by hand
+
 				local mn, mx
 				for _, d in ipairs(holder:GetDescendants()) do
 					if d:IsA("BasePart") then
@@ -2700,7 +2842,7 @@ local FarmSystem = {
 				angle = math.random() * 6.28,
 			}
 			placeCam(v)
-			-- meshes / textures that are not loaded yet are what made some icons show up empty
+
 			task.spawn(function()
 				pcall(function()
 					game:GetService("ContentProvider"):PreloadAsync({ holder })
@@ -2774,7 +2916,7 @@ local FarmSystem = {
 			local row = { frame = frame, label = label, vf = vf, entry = entry, tries = 0, text = "" }
 			row.view = mountView(vf, entry.Model)
 			if not row.view then
-				-- no model / could not draw it: show the first letter in the rarity colour instead of "?"
+
 				row.ph = New("TextLabel", {
 					Size = UDim2.fromScale(1, 1),
 					BackgroundTransparency = 1,
@@ -2826,7 +2968,6 @@ local FarmSystem = {
 				ZIndex = 8,
 			}, afkHist)
 
-			-- dropdown panel (opens under the button) with two tabs inside
 			histPanel = New("Frame", {
 				AnchorPoint = Vector2.new(1, 0),
 				Position = UDim2.new(1, -12, 0, 92),
@@ -2982,7 +3123,6 @@ local FarmSystem = {
 				afkStats.Stolen.Text = tostring(Stats.Stolen)
 				afkStats.MutStolen.Text = tostring(Stats.MutStolen)
 
-				-- mutation chips (only mutations that were actually stolen)
 				local names = {}
 				for n, c in pairs(Stats.Mut) do
 					if c > 0 then
@@ -3023,7 +3163,6 @@ local FarmSystem = {
 					end
 				end
 
-				-- system status dots
 				local ON, OFF = Color3.fromRGB(46, 204, 113), Color3.fromRGB(100, 100, 100)
 				afkStats.Dots.Break.BackgroundColor3 = (SW.Running or TT.Running) and ON or OFF
 				afkStats.Dots.Steal.BackgroundColor3 = ST.Running and ON or OFF
@@ -3081,7 +3220,7 @@ local FarmSystem = {
 			end
 			local snap = AFK.Snapshot
 			AFK.Snapshot = nil
-			-- restoring the snapshot may flip the AFK switch back ON (it was ON when the snapshot was taken): block that
+
 			AFK.Closing = true
 			if snap then
 				local ok, err = pcall(ApplyConfig, snap)
@@ -3207,7 +3346,7 @@ local FarmSystem = {
 			SW.Rarity = toSet(chosen)
 		end,
 	})
-	-- (locals shared with the code after this block are declared here; the rest live inside do ... end to stay under the 200 local limit)
+
 	local SAFE, stJob, inAnyZone, stAlive, stStatus, restoreCollide, setBusy, restoreRagdollStates
 	local zoneOfX, zoneIdx, zoneGap, getPart, parseAmount, formatAmount, incomeOf, MUT_NAMES
 	local mutationsOf, getTargets, sleep, moveTo, cleanupLock, carriedCount, collect, claimWork
@@ -3521,7 +3660,7 @@ local FarmSystem = {
 		humState = nil
 	end))
 
-	end -- /do
+	end
 	local getRarity, FL, passIncome, chosenFrom
 	do
 	local TemplateRarity = {}
@@ -3690,7 +3829,7 @@ local FarmSystem = {
 		end
 		return nil
 	end
-	-- the filter in use: Auto Steal's own, or the Auto Carry Escape one while it runs
+
 	function FL()
 		if ST.CE.Mode and ST.CE.F then
 			return ST.CE.F
@@ -3790,7 +3929,7 @@ local FarmSystem = {
 		return false
 	end
 
-	end -- /do
+	end
 	local dbgSeen = {}
 	local function dbgLog(o, msg)
 		if dbgSeen[o] == msg then return end
@@ -3811,8 +3950,7 @@ local FarmSystem = {
 		local total = 0
 		for _, o in ipairs(folder:GetChildren()) do
 			local part = getPart(o)
-			-- Auto Carry Escape: never pick up an animal lying where we noclip (all of zone 1, or within 120 studs of the
-			-- escape spot): that is where an animal you put down ends up, even if you walk away from it afterwards
+
 			if part and ST.CE.Mode
 				and (Vector3.new(part.Position.X - ST.CE.Pos.X, 0, part.Position.Z - ST.CE.Pos.Z).Magnitude <= 120
 					or (inAnyZone(part.Position) and zoneIdx(part.Position) == 1)) then
@@ -3892,11 +4030,6 @@ local FarmSystem = {
 		return stAlive(id)
 	end
 
-	-- ===== Landing safety for far teleports (StreamingEnabled) =====
-	-- A far teleport can land where the floor is not streamed in yet: the character falls through the gap and keeps
-	-- falling once the floor appears above it. So: ask the game to stream the destination first, wait until a floor is
-	-- found, hold the character at the target height until it stands on something, and pull it back if it still ends
-	-- up far below the map.
 	local function floorRay(pos, up, down)
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
@@ -3949,7 +4082,7 @@ local FarmSystem = {
 			end
 			local p = hrp.Position
 			if p.Y < GROUND_Y - 30 then
-				-- fell under the map: back to the last safe spot
+
 				hrp.CFrame = CFrame.new(lastSafe)
 				hrp.AssemblyLinearVelocity = Vector3.zero
 			elseif p.Y >= GROUND_Y - 3 and p.Y <= GROUND_Y + 12 and os.clock() >= nextSave and floorRay(p, 0, 15) then
@@ -3982,7 +4115,7 @@ local FarmSystem = {
 			local np = Vector3.new(pos.X, GROUND_Y, pos.Z)
 			local far = (hrp.Position - np).Magnitude > 200
 			if far then
-				-- far teleport: make the destination floor load first
+
 				ST.PrepareLanding(np)
 				if not stAlive(id) or EventGate.Abort then
 					return false
@@ -4000,7 +4133,7 @@ local FarmSystem = {
 			RunService.Heartbeat:Wait()
 			return true
 		end
-		-- TP Walk: ขยับตัวละครด้วย CFrame ตามความเร็ว spd (studs/วินาที)
+
 		local t0 = os.clock()
 		local off0 = Vector3.new(pos.X - hrp.Position.X, 0, pos.Z - hrp.Position.Z).Magnitude
 		local timeout = off0 / math.max(spd, 1) * 3 + 8
@@ -4249,7 +4382,7 @@ local FarmSystem = {
 		local mine
 		if result then
 			mine = findMine(obj, beforeSet)
-			-- the carried copy can show up a moment after the pickup disappears: wait for it instead of giving up
+
 			local tm = os.clock()
 			while not mine and stAlive(id) and os.clock() - tm < 1.5 do
 				RunService.Heartbeat:Wait()
@@ -4301,7 +4434,6 @@ local FarmSystem = {
 		return best
 	end
 
-	-- (hoisted) local flingRemote
 	flingAt = -100
 	task.spawn(function()
 		local r = ReplicatedStorage:FindFirstChild("CatchFlingRemote") or ReplicatedStorage:WaitForChild("CatchFlingRemote", 60)
@@ -4315,8 +4447,6 @@ local FarmSystem = {
 		end
 	end)
 
-	-- true when the guard really hit us after `mark` (a flingAt value taken before walking to the guard).
-	-- Uses the game's own fling event; without it, falls back to standing next to a guard.
 	local function guardHitSince(mark)
 		if flingRemote then
 			local t = os.clock()
@@ -4329,8 +4459,6 @@ local FarmSystem = {
 		return g ~= nil and h ~= nil and (g.Position - h.Position).Magnitude <= 20
 	end
 
-	-- Teleport mode, outbound leg. From 2+ zones away from the target we break an egg of the zone we stand in
-	-- (Safe Zone -> zone 1), pick the hatched animal up and let that zone's guard hit us, which arms the teleport.
 	ST.PrimeSpeed = 100
 
 	function ST.PrimeZone(pos)
@@ -4362,7 +4490,7 @@ local FarmSystem = {
 			if not eggs then
 				return nil
 			end
-			-- smallest egg wins (same eggSize the stats use); equal size -> the nearer one
+
 			local best, bs, bd
 			for _, m in ipairs(eggs:GetChildren()) do
 				local part = m:FindFirstChild("Egg")
@@ -4379,7 +4507,6 @@ local FarmSystem = {
 		return (nearestIn(zone))
 	end
 
-	-- GuardOverhead -> the BasePart of that guard
 	function ST.GuardPart(d)
 		local pt = d
 		while pt and not pt:IsA("BasePart") do
@@ -4392,9 +4519,6 @@ local FarmSystem = {
 		return pt
 	end
 
-	-- The guard of zone `n` that is closest to `from`. It only looks at guards that belong to that zone
-	-- (inside Workspace.Build.ZoneBuilds.ZoneN, or standing inside the zone's X range) and never falls back to a guard
-	-- of another zone, so it can no longer run off to some far away guard. Returns nil when the zone has no guard.
 	local zoneGuardCache = {}
 	function ST.ZoneGuard(n, from)
 		local cache = zoneGuardCache[n]
@@ -4554,7 +4678,7 @@ local FarmSystem = {
 			end
 			return false
 		end
-		-- the animal that just came out of the egg: walk to it for real (Humanoid:MoveTo), no TP walk
+
 		realWalk(function()
 			return apart.Parent and apart.Position or nil
 		end, 3, function()
@@ -4618,7 +4742,7 @@ local FarmSystem = {
 		return true
 	end
 
-	end -- /do
+	end
 	local function flatDist(a, b)
 		return Vector3.new(a.X - b.X, 0, a.Z - b.Z).Magnitude
 	end
@@ -4659,9 +4783,7 @@ local FarmSystem = {
 	end
 
 	end
-	-- Teleport move mode for other features. Returns true when we ended up at the target.
-	-- Same recipe as Auto Steal: from 2+ zones away break an egg here, get hit by the guard, then teleport.
-	-- o = { part, stop, alive, say }
+
 	function TPX.reach(o)
 		if ST.Ext or (ST.Running and (ST.Busy or ST.Working)) then
 			return false
@@ -4709,11 +4831,6 @@ local FarmSystem = {
 		return reached
 	end
 
-	-- ===== Auto Carry Escape =====
-	-- Separate system (Extras tab) with its own switch, Rarity and Min Income. It is the Auto Steal loop with its own
-	-- filter that finds its targets itself, but the animal is delivered to the escape spot (ST.CE.Pos, outside the map)
-	-- instead of the Safe Zone. Noclip every frame while ON, collisions are restored when it is turned OFF.
-	-- It uses the same loop as Auto Steal, so the two can not run at the same time (turning one ON turns the other OFF).
 	function ST.CE.Dest()
 		return ST.CE.Mode and ST.CE.Pos or SAFE
 	end
@@ -4726,7 +4843,7 @@ local FarmSystem = {
 		if not c then
 			return
 		end
-		-- noclip inside all of zone 1 and inside the radius (120 studs) around the escape spot; everywhere else collisions are normal
+
 		local root = c:FindFirstChild("HumanoidRootPart")
 		if not root or ((root.Position - ST.CE.Pos).Magnitude > 120 and not (inAnyZone(root.Position) and zoneIdx(root.Position) == 1)) then
 			ST.CE.Restore()
@@ -4759,8 +4876,6 @@ local FarmSystem = {
 		ST.CE.Restore()
 	end)
 
-	-- Zone 1 rule of Auto Carry Escape: inside zone 1 (not standing at the escape spot itself) there is no guard hit and
-	-- nothing is picked up automatically. An animal you pick up yourself is simply walked to the escape spot.
 	function ST.CE.InZone1(pos)
 		if not pos then
 			return false
@@ -4771,7 +4886,6 @@ local FarmSystem = {
 		return Vector3.new(pos.X - ST.CE.Pos.X, 0, pos.Z - ST.CE.Pos.Z).Magnitude > 15
 	end
 
-	-- an animal of ours is in our hands: a carried animal part right next to the character
 	function ST.CE.Holding()
 		local f = Workspace:FindFirstChild("CarriedAnimals")
 		local hrp = getHRP()
@@ -4786,7 +4900,6 @@ local FarmSystem = {
 		return false
 	end
 
-	-- An animal of ours is on us right now (tight radius, so another player's carried animal nearby does not count).
 	function ST.CE.Carrying()
 		local f = Workspace:FindFirstChild("CarriedAnimals")
 		local hrp = getHRP()
@@ -4801,8 +4914,6 @@ local FarmSystem = {
 		return false
 	end
 
-	-- ST.CE.Busy: while Auto Carry Escape is ON and we are carrying an animal, every other function waits (Auto Break,
-	-- gems, Titanic, treadmill, Auto Place Eggs ...) until the animal is released.
 	do
 		local nextCheck = 0
 		track(RunService.Heartbeat:Connect(function()
@@ -4818,8 +4929,6 @@ local FarmSystem = {
 		end))
 	end
 
-	-- Auto Carry Escape: straight teleport (no TP Walk) to the escape spot, exact position incl. height. Repeats until we
-	-- are there, the animal is gone from our hands, or the loop stops.
 	function ST.CE.Warp(id, holdFn)
 		holdFn = holdFn or ST.CE.Holding
 		local function there()
@@ -4905,8 +5014,6 @@ local FarmSystem = {
 				continue
 			end
 
-			-- Auto Carry Escape: at the escape spot with the animal still in our hands -> stand still, no new round
-			-- (the player moves freely). The loop works again as soon as nothing is carried any more.
 			if ST.CE.Mode then
 				local flatEsc = Vector3.new(hrp.Position.X - ST.CE.Pos.X, 0, hrp.Position.Z - ST.CE.Pos.Z).Magnitude
 				if flatEsc <= 15 and ST.CE.Holding() then
@@ -4920,7 +5027,6 @@ local FarmSystem = {
 				end
 			end
 
-			-- Auto Carry Escape in zone 1: no guard, no automatic pick-up; an animal you pick up yourself is walked out
 			if ST.CE.Mode and ST.CE.InZone1(hrp.Position) then
 				if not ST.CE.Holding() then
 					ST.CE.Tried = false
@@ -4930,7 +5036,7 @@ local FarmSystem = {
 					end
 					stStatus("Zone 1: pick up an animal yourself (nothing is picked up automatically)")
 				elseif not ST.CE.Tried then
-					ST.CE.Tried = true -- one try per animal
+					ST.CE.Tried = true
 					claimWork(id)
 					setBusy(true)
 					stStatus("Zone 1 -> teleporting to the escape spot")
@@ -4944,7 +5050,6 @@ local FarmSystem = {
 				continue
 			end
 
-			-- Auto Carry Escape: while an animal is in our hands (anywhere) no new round, no warp back; everything else waits too
 			if ST.CE.Mode and ST.CE.Carrying() then
 				if ST.Working or ST.Busy then
 					ST.Working = false
@@ -5084,9 +5189,9 @@ local FarmSystem = {
 				local hs = getHRP()
 				stealPos = hs and hs.Position or nil
 				local hpz = getHRP()
-				-- Auto Carry Escape + stolen inside zone 1: walk straight to the escape spot, no guard hit, no recovery
+
 				local zone1Out = ST.CE.Mode and ST.CE.InZone1(hpz and hpz.Position)
-				local deliverTp = ST.TpMode and not zone1Out -- return leg always uses TP mode (guard hit -> teleport), except zone 1 of Carry Escape
+				local deliverTp = ST.TpMode and not zone1Out
 				local histEntry = Stats.AddSteal(eMuts, eInfo or {})
 				stStatus("Stolen! Heading back to Safe Zone")
 				local DROP_NEAR_SAFE = 30
@@ -5225,12 +5330,12 @@ local FarmSystem = {
 						end
 					elseif deliverTp and tpHitDone then
 						ST.TpArmed = true
-						-- Carry Escape: teleport to zone 1 first, then walk (noclip) to the escape spot
+
 						stStatus(ST.CE.Mode and "Teleport -> escape spot" or "Teleport -> Safe Zone")
 						if ST.CE.Mode then
 							ST.TpArmed = false
 							ST.CE.Warp(id, holding)
-							-- arrived: free the character (controls, speed, jump, collisions)
+
 							setBusy(false)
 						else
 							moveTo(ST.CE.Dest(), id, 2.5)
@@ -5264,7 +5369,7 @@ local FarmSystem = {
 						if not stAlive(id) then
 							finished = true
 						elseif zone1Out and lost() then
-							finished = true -- zone 1: the dropped animal is not picked up again automatically
+							finished = true
 						elseif lost() then
 							local gh = byGuard()
 							recoveries += 1
@@ -5407,7 +5512,6 @@ local FarmSystem = {
 		end,
 	})
 
-	-- ===== Auto Carry Escape (Extras tab) =====
 	function ST.CE.Stop()
 		local was = ST.CE.Mode
 		ST.CE.Mode = false
@@ -5472,9 +5576,6 @@ local FarmSystem = {
 		if ST.CE.IncomeInput then ST.CE.IncomeInput.Set(formatAmount(v), true) end
 	end, "Only steal animals earning at least this per second (0 / empty = off)")
 
-	-- ===== Auto Sell (Extras tab) =====
-	-- Sells the animals in the backpack whose Rarity is chosen and whose income per second (ToolValue / 60) is BELOW the
-	-- entered value (equal or higher = kept). Nothing is sold until a Rarity is chosen AND a value is entered.
 	ST.Sell = { Running = false, Job = 0, Rarity = {}, Below = nil, Total = 0 }
 
 	local SELL_UNITS = { K = 1e3, M = 1e6, B = 1e9, T = 1e12, QA = 1e15, QI = 1e18, SX = 1e21, SP = 1e24, OC = 1e27, NO = 1e30, DC = 1e33 }
@@ -5607,12 +5708,9 @@ local FarmSystem = {
 		end
 	end, "Animals that produce less income per second than this are sold, equal or more are kept (e.g. 100B = 100B/s). Empty = nothing is sold")
 
-	-- Auto Place Eggs: places the eggs you carry (the game keeps them as parent-less inventory items) into your own
-	-- garden at random spots. The garden is the Hitbox of the plot whose OwnerUserId is yours, so it follows you when the
-	-- plot changes (another Base_N, another server, an upgraded / wider plot). Kept in a do-block to save local slots.
 	do
-		local PE = { Running = false, Job = 0, Sent = 0, Tried = setmetatable({}, { __mode = "k" }), Twin = setmetatable({}, { __mode = "k" }), Speed = 100, Saved = {} } -- Speed: TP Walk speed to the plot (studs / second), fixed
-		local PE_MARGIN = 3 -- studs kept free from the edge of the garden
+		local PE = { Running = false, Job = 0, Sent = 0, Tried = setmetatable({}, { __mode = "k" }), Twin = setmetatable({}, { __mode = "k" }), Speed = 100, Saved = {} }
+		local PE_MARGIN = 3
 
 		local function peAlive(id)
 			return PE.Running and PE.Job == id
@@ -5635,7 +5733,6 @@ local FarmSystem = {
 			return nil
 		end
 
-		-- random point inside the garden, on the floor
 		local function randomSpot(plot, hb)
 			local cf, size = hb.CFrame, hb.Size
 			local hx = math.max(size.X / 2 - PE_MARGIN, 0)
@@ -5643,7 +5740,7 @@ local FarmSystem = {
 			local lx = (math.random() * 2 - 1) * hx
 			local lz = (math.random() * 2 - 1) * hz
 			local top = cf:PointToWorldSpace(Vector3.new(lx, size.Y / 2, lz))
-			local y = hb.Position.Y - size.Y / 2 + 0.77 -- fallback height (same as a normal placement)
+			local y = hb.Position.Y - size.Y / 2 + 0.77
 			pcall(function()
 				local params = RaycastParams.new()
 				params.FilterType = Enum.RaycastFilterType.Exclude
@@ -5686,7 +5783,6 @@ local FarmSystem = {
 			return true
 		end
 
-		-- eggs you carry: egg tools in your hand / backpack first, then parent-less inventory items named "... Egg"
 		local function findEggs()
 			local out, seen = {}, {}
 			local function add(o)
@@ -5727,7 +5823,6 @@ local FarmSystem = {
 			return out, tools
 		end
 
-		-- hold the egg tool (the game places the egg you hold); true when it is in the hand
 		function PE.holdEgg(tool)
 			local char = LocalPlayer.Character
 			local hum = getHumanoid()
@@ -5750,7 +5845,6 @@ local FarmSystem = {
 			return tool.Parent == char
 		end
 
-		-- the parent-less inventory item with the same name as a held egg tool, if the game made one
 		function PE.nilTwin(tool)
 			if type(getnilinstances) ~= "function" then
 				return nil
@@ -5771,7 +5865,6 @@ local FarmSystem = {
 			return not (rec and rec.n >= 3 and os.clock() - rec.t < 30)
 		end
 
-		-- the egg tool that is already in the hand
 		function PE.heldEgg()
 			local c = LocalPlayer.Character
 			if c then
@@ -5784,12 +5877,10 @@ local FarmSystem = {
 			return nil
 		end
 
-		-- other systems that have priority (Auto Place Eggs steps aside for them)
 		function PE.blocked()
 			return ST.Working or ST.CE.Busy or GM.Working or TT.Working or evBlock()
 		end
 
-		-- the spot inside the garden that is closest to us, and whether we are already standing in the garden
 		function PE.target(hb, hrp)
 			local cf, size = hb.CFrame, hb.Size
 			local hx = math.max(size.X / 2 - 4, 0)
@@ -5801,7 +5892,6 @@ local FarmSystem = {
 			return target, flat <= 2 and math.abs(target.Y - hrp.Position.Y) <= 8
 		end
 
-		-- TP Walk to the plot at a fixed speed (collisions off while walking so walls do not stop us)
 				function PE.restore()
 			for p, v in pairs(PE.Saved) do
 				if p and p.Parent then
@@ -5857,8 +5947,6 @@ local FarmSystem = {
 			return arrived
 		end
 
-		-- inside the garden: keep TP-walking (fixed speed) between random waypoints while the eggs are fired,
-		-- so the eggs end up spread over the whole garden
 		function PE.roam(hb)
 			local char = LocalPlayer.Character
 			local hrp = getHRP()
@@ -5906,7 +5994,6 @@ local FarmSystem = {
 			end
 		end
 
-		-- nothing to place / stepping aside: let Auto Break & co. work again
 		function PE.Release()
 			PE.restore()
 			PE.Way, PE.LastT = nil, nil
@@ -5914,7 +6001,6 @@ local FarmSystem = {
 			SW.PlacingEgg = false
 		end
 
-		-- one frame of work: find an egg -> walk to the plot -> hold it -> fire PlaceEgg. No messages, no waits.
 		function PE.Step(id)
 			local plot, hb = myPlot()
 			local remote = ReplicatedStorage:FindFirstChild("MergeMachineRemote")
@@ -5957,8 +6043,8 @@ local FarmSystem = {
 				end
 				arg = tw.v or egg
 			end
-			PE.roam(hb) -- TP Walk to the next random waypoint in the garden, then shoot
-			-- safety: one egg that never goes away after a lot of shots is skipped for a while
+			PE.roam(hb)
+
 			rec.f = (rec.f or 0) + 1
 			if rec.f > 300 then
 				rec.n, rec.t, rec.f = 3, os.clock(), 0
@@ -5994,9 +6080,9 @@ local FarmSystem = {
 						PE.Release()
 						task.wait(1)
 					elseif did then
-						RunService.Heartbeat:Wait() -- working: next shot on the very next frame
+						RunService.Heartbeat:Wait()
 					else
-						-- nothing to place right now: look again in a moment
+
 						local t0 = os.clock()
 						while peAlive(id) and os.clock() - t0 < 0.25 do
 							RunService.Heartbeat:Wait()
@@ -6212,7 +6298,7 @@ end
 local systems = {}
 for _, system in ipairs(ALL_SYSTEMS) do
 	if CONFIG.Systems[system.Id] ~= false then
-		-- ครอบ Build ด้วย xpcall เพื่อให้เห็น error ที่ไลบรารีอาจกลืนไว้
+
 		local origBuild = system.Build
 		system.Build = function(UI)
 			log("step 4: building system '" .. tostring(system.Id) .. "'")
