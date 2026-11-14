@@ -450,6 +450,8 @@ local FarmSystem = {
 	-- Real walking (same method as Auto Collect Gems): Humanoid:Move() is applied from a RenderStep that runs AFTER the
 	-- game's own controls (they call Move(0) every frame), Humanoid:MoveTo is the backup, and the character jumps when
 	-- stuck. The speed is the game's own WalkSpeed. Used by Auto Break, Titanic Egg and every walking leg of Auto Steal.
+	local realWalk
+	do
 	local RW_BIND = "LunarRealWalk"
 	local RW = { Target = nil, Bound = false }
 
@@ -503,7 +505,7 @@ local FarmSystem = {
 	addCleanup(rwHalt)
 
 	-- target: Vector3 or a function returning Vector3 / nil. Returns true when within `stop` studs (flat distance).
-	local function realWalk(target, stop, alive, abortFn, abortEvery)
+	function realWalk(target, stop, alive, abortFn, abortEvery)
 		local function resolve()
 			if type(target) == "function" then
 				return target()
@@ -569,6 +571,7 @@ local FarmSystem = {
 		return result
 	end
 
+	end -- /do
 	local function toSet(list)
 		local t = {}
 		for _, v in ipairs(list or {}) do
@@ -625,7 +628,9 @@ local FarmSystem = {
 		return SW.Running and SW.Job == id
 	end
 
-	local function findSwingBtn()
+	local findSwingBtn, pressBtn, setSwingEventState, hookSwingEvents, readSwingState, setGameSwing, holdingPick, enableGameSwing, equipPickaxe, eggRarity, eggAlive, eggSize, swStop, swStart
+	do
+	function findSwingBtn()
 		local pg = LocalPlayer:FindFirstChild("PlayerGui")
 		local mg = pg and pg:FindFirstChild("MainGUI")
 		local btn = mg and mg:FindFirstChild("AutoSwing")
@@ -635,7 +640,7 @@ local FarmSystem = {
 		return btn
 	end
 
-	local function pressBtn(btn)
+	function pressBtn(btn)
 		if firesignal and btn and btn:IsA("GuiButton") then
 			pcall(firesignal, btn.MouseButton1Click)
 			pcall(firesignal, btn.Activated)
@@ -680,7 +685,7 @@ local FarmSystem = {
 	end
 
 	local swingHooked = {}
-	local function setSwingEventState(want)
+	function setSwingEventState(want)
 		if type(getnilinstances) ~= "function" then
 			return false
 		end
@@ -707,7 +712,7 @@ local FarmSystem = {
 		end
 		return false
 	end
-	local function hookSwingEvents()
+	function hookSwingEvents()
 		if type(getnilinstances) ~= "function" then
 			return
 		end
@@ -733,7 +738,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function readSwingState(btn)
+	function readSwingState(btn)
 		for _, inst in ipairs({ btn, btn.Parent }) do
 			if inst then
 				for k, v in pairs(inst:GetAttributes()) do
@@ -775,7 +780,7 @@ local FarmSystem = {
 		return nil
 	end
 
-	local function setGameSwing(want)
+	function setGameSwing(want)
 		local btn = findSwingBtn()
 		if not btn then
 			return false
@@ -808,7 +813,7 @@ local FarmSystem = {
 
 	local ensureSwingRemote
 
-	local function holdingPick()
+	function holdingPick()
 		local c = LocalPlayer.Character
 		if c then
 			for _, t in ipairs(c:GetChildren()) do
@@ -820,7 +825,7 @@ local FarmSystem = {
 		return false
 	end
 
-	local function enableGameSwing()
+	function enableGameSwing()
 		hookSwingEvents()
 		local btn = ensureSwingRemote and ensureSwingRemote() or findSwingBtn()
 		if not btn then
@@ -904,7 +909,7 @@ local FarmSystem = {
 		return t:IsA("Tool") and t.Name:lower():find("pick") ~= nil
 	end
 
-	local function equipPickaxe()
+	function equipPickaxe()
 		if SW.PlacingEgg then
 			return true -- Auto Place Eggs is holding an egg right now: do not swap it for the pickaxe
 		end
@@ -960,16 +965,16 @@ local FarmSystem = {
 		return btn
 	end
 
-	local function eggRarity(model)
+	function eggRarity(model)
 		local g = model:FindFirstChild("RarityGradient", true)
 		return g and g:GetAttribute("Rarity")
 	end
 
-	local function eggAlive(part)
+	function eggAlive(part)
 		return part and part.Parent and part:GetAttribute("Broken") ~= true and (part:GetAttribute("Health") or 1) > 0
 	end
 
-	local function eggSize(model, part)
+	function eggSize(model, part)
 		local ok, s = pcall(function()
 			return model:GetExtentsSize()
 		end)
@@ -1327,7 +1332,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function swStop(msg)
+	function swStop(msg)
 		local was = SW.Running
 		SW.Running = false
 		SW.Working = false
@@ -1346,7 +1351,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function swStart()
+	function swStart()
 		local any = false
 		for _, v in pairs(SW.Rarity) do
 			if v then
@@ -1379,7 +1384,10 @@ local FarmSystem = {
 		return true
 	end
 
-	local setTtStatus
+	end -- /do
+	local setTtStatus, ttStop, ttStart
+	do
+
 	local TT_GAP = 3.2
 
 	local function ttAlive(id)
@@ -1608,7 +1616,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function ttStop(msg)
+	function ttStop(msg)
 		local was = TT.Running
 		TT.Running = false
 		TT.Job += 1
@@ -1626,7 +1634,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function ttStart()
+	function ttStart()
 		TT.Running = true
 		TT.Paused = false
 		TT.Job += 1
@@ -1854,6 +1862,7 @@ local FarmSystem = {
 		end
 	end
 
+	end -- /do
 	local TM = { Running = false, Job = 0, Speed = 150, Margin = 7, GroundY = 3.693 }
 	local setTmStatus, setEqStatus
 
@@ -3198,6 +3207,12 @@ local FarmSystem = {
 			SW.Rarity = toSet(chosen)
 		end,
 	})
+	-- (locals shared with the code after this block are declared here; the rest live inside do ... end to stay under the 200 local limit)
+	local SAFE, stJob, inAnyZone, stAlive, stStatus, restoreCollide, setBusy, restoreRagdollStates
+	local zoneOfX, zoneIdx, zoneGap, getPart, parseAmount, formatAmount, incomeOf, MUT_NAMES
+	local mutationsOf, getTargets, sleep, moveTo, cleanupLock, carriedCount, collect, claimWork
+	local nearestGuard, flingRemote, flingAt, tpReach
+	do
 	local SW_ZONES = {}
 	for z = 1, 13 do
 		SW_ZONES[z] = "Zone " .. z
@@ -3284,7 +3299,7 @@ local FarmSystem = {
 		end,
 	})
 
-	local SAFE = Vector3.new(-72.500, 3.693, 0)
+	SAFE = Vector3.new(-72.500, 3.693, 0)
 	local GROUND_Y = 3.693
 	local ZONE_X = {
 		[1] = { -174.5, -81.5 }, [2] = { -304.0, -187.0 }, [3] = { -463.2, -315.8 },
@@ -3292,22 +3307,22 @@ local FarmSystem = {
 		[7] = { -1819.5, -1311.5 }, [8] = { -2338.0, -1831.0 }, [9] = { -2863.0, -2350.0 },
 		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 },
 	}
-	local stJob = 0
+	stJob = 0
 
-	local function inAnyZone(pos)
+	function inAnyZone(pos)
 		return pos.X <= ZONE_X[1][2] and pos.X >= ZONE_X[13][1] - 5
 	end
 	EventGate.Safe = SAFE
 	EventGate.InZone = inAnyZone
 
-	local function stAlive(id)
+	function stAlive(id)
 		if ST.Ext and ST.Ext.id == id then
 			return ST.Ext.alive() == true
 		end
 		return ST.Running and stJob == id
 	end
 
-	local function stStatus(t)
+	function stStatus(t)
 		if ST.Ext then
 			ST.Ext.say(t)
 			return
@@ -3317,6 +3332,7 @@ local FarmSystem = {
 		end
 	end
 
+	do
 	local saved, humState = {}, nil
 
 	local function lockControls(on)
@@ -3367,7 +3383,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function restoreCollide()
+	function restoreCollide()
 		for p, v in pairs(saved) do
 			if p and p.Parent then
 				p.CanCollide = v
@@ -3376,7 +3392,7 @@ local FarmSystem = {
 		table.clear(saved)
 	end
 
-	local function setBusy(b)
+	function setBusy(b)
 		if ST.Busy == b then
 			return
 		end
@@ -3466,7 +3482,7 @@ local FarmSystem = {
 		end)
 	end
 
-	local function restoreRagdollStates()
+	function restoreRagdollStates()
 		local h = getHumanoid()
 		if h then
 			pcall(function()
@@ -3505,6 +3521,9 @@ local FarmSystem = {
 		humState = nil
 	end))
 
+	end -- /do
+	local getRarity, FL, passIncome, chosenFrom
+	do
 	local TemplateRarity = {}
 	pcall(function()
 		local root = ReplicatedStorage:FindFirstChild("Animals") or ReplicatedStorage
@@ -3517,7 +3536,7 @@ local FarmSystem = {
 	end)
 
 	local rarityCache = setmetatable({}, { __mode = "k" })
-	local function getRarity(obj)
+	function getRarity(obj)
 		if rarityCache[obj] then
 			return rarityCache[obj]
 		end
@@ -3584,7 +3603,7 @@ local FarmSystem = {
 		return res
 	end
 
-	local function zoneOfX(x)
+	function zoneOfX(x)
 		for z, rng in pairs(ZONE_X) do
 			if x >= rng[1] - 5 and x <= rng[2] + 5 then
 				return z
@@ -3600,18 +3619,18 @@ local FarmSystem = {
 		return best
 	end
 
-	local function zoneIdx(pos)
+	function zoneIdx(pos)
 		if pos.X > ZONE_X[1][2] + 5 then
 			return 0
 		end
 		return zoneOfX(pos.X) or 0
 	end
 
-	local function zoneGap(a, b)
+	function zoneGap(a, b)
 		return math.abs(zoneIdx(a) - zoneIdx(b))
 	end
 
-	local function getPart(o)
+	function getPart(o)
 		if o:IsA("BasePart") then
 			return o
 		end
@@ -3627,14 +3646,14 @@ local FarmSystem = {
 		return n * (MONEY_MULT[tostring(suffix or ""):upper()] or 1)
 	end
 
-	local function parseAmount(text)
+	function parseAmount(text)
 		if type(text) ~= "string" then return nil end
 		local num, suf = text:match("([%d][%d,%.]*)%s*([KkMmBbTt]?)")
 		if not num then return nil end
 		return toNumber(num, suf)
 	end
 
-	local function formatAmount(n)
+	function formatAmount(n)
 		if type(n) ~= "number" or n <= 0 then return "" end
 		for _, u in ipairs({ { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }) do
 			if n >= u[1] then
@@ -3654,7 +3673,7 @@ local FarmSystem = {
 	end
 	local incomeLabel = setmetatable({}, { __mode = "k" })
 
-	local function incomeOf(obj)
+	function incomeOf(obj)
 		local lbl = incomeLabel[obj]
 		if lbl and lbl.Parent then
 			local v = incomeFromText(lbl.Text)
@@ -3672,13 +3691,13 @@ local FarmSystem = {
 		return nil
 	end
 	-- the filter in use: Auto Steal's own, or the Auto Carry Escape one while it runs
-	local function FL()
+	function FL()
 		if ST.CE.Mode and ST.CE.F then
 			return ST.CE.F
 		end
 		return ST
 	end
-	local function passIncome(obj)
+	function passIncome(obj)
 		local minInc = FL().MinIncome
 		if minInc <= 0 then return true end
 		local inc = incomeOf(obj)
@@ -3689,7 +3708,7 @@ local FarmSystem = {
 		return inc >= minInc
 	end
 
-	local MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky",
+	MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky",
 		"Void", "Time", "Hacker", "Fallen Angel", "Fallen Angel Gold", "Fallen Angel Diamond", "Devil Gold", "Devil Diamond" }
 	local MUT_CANON = {}
 	for _, n in ipairs(MUT_NAMES) do MUT_CANON[n:lower()] = n end
@@ -3707,7 +3726,7 @@ local FarmSystem = {
 		end
 	end)
 
-	local function mutationsOf(obj)
+	function mutationsOf(obj)
 		local found, source = {}, nil
 		local function addValue(v, from)
 			if typeof(v) ~= "string" or v == "" then return end
@@ -3758,7 +3777,7 @@ local FarmSystem = {
 		return found, source
 	end
 
-	local function chosenFrom(found)
+	function chosenFrom(found)
 		local want = FL().Mutation
 		if next(want) == nil then
 			return false
@@ -3771,6 +3790,7 @@ local FarmSystem = {
 		return false
 	end
 
+	end -- /do
 	local dbgSeen = {}
 	local function dbgLog(o, msg)
 		if dbgSeen[o] == msg then return end
@@ -3778,7 +3798,7 @@ local FarmSystem = {
 		warn("[LUNAR Hub] Steal: " .. tostring(o.Name) .. " " .. msg)
 	end
 
-	local function getTargets(skip)
+	function getTargets(skip)
 		local list, skipped = {}, 0
 		ST.Unread = 0
 		ST.Why = ""
@@ -3861,7 +3881,7 @@ local FarmSystem = {
 		return list, skipped
 	end
 
-	local function sleep(t, id)
+	function sleep(t, id)
 		local t0 = os.clock()
 		while os.clock() - t0 < t do
 			if not stAlive(id) then
@@ -3939,7 +3959,7 @@ local FarmSystem = {
 		end))
 	end
 
-	local function moveTo(target, id, stopDist, abortFn, forceWalk, abortEvery, speed)
+	function moveTo(target, id, stopDist, abortFn, forceWalk, abortEvery, speed)
 		stopDist = stopDist or 2.5
 		local spd = speed or ST.Speed
 		local nextCheck = 0
@@ -4017,14 +4037,14 @@ local FarmSystem = {
 	end
 
 	local lockConn
-	local function cleanupLock()
+	function cleanupLock()
 		if lockConn then
 			lockConn:Disconnect()
 			lockConn = nil
 		end
 	end
 
-	local function carriedCount()
+	function carriedCount()
 		local f = Workspace:FindFirstChild("CarriedAnimals")
 		return f and #f:GetDescendants() or 0
 	end
@@ -4168,7 +4188,7 @@ local FarmSystem = {
 		return fallback
 	end
 
-	local function collect(obj, part, id, skipVerify)
+	function collect(obj, part, id, skipVerify)
 		cleanupLock()
 		local lockPos
 		lockConn = RunService.Heartbeat:Connect(function()
@@ -4239,7 +4259,7 @@ local FarmSystem = {
 		return result, mine, invalid
 	end
 
-	local function claimWork(id)
+	function claimWork(id)
 		ST.Working = true
 		TMX.Exit()
 		local t0 = os.clock()
@@ -4248,8 +4268,9 @@ local FarmSystem = {
 		end
 	end
 
+	do
 	local guardCache, guardAt = nil, 0
-	local function nearestGuard()
+	function nearestGuard()
 		local hrp = getHRP()
 		if not hrp then
 			return nil
@@ -4280,8 +4301,8 @@ local FarmSystem = {
 		return best
 	end
 
-	local flingRemote
-	local flingAt = -100
+	-- (hoisted) local flingRemote
+	flingAt = -100
 	task.spawn(function()
 		local r = ReplicatedStorage:FindFirstChild("CatchFlingRemote") or ReplicatedStorage:WaitForChild("CatchFlingRemote", 60)
 		if r and r:IsA("RemoteEvent") then
@@ -4597,11 +4618,12 @@ local FarmSystem = {
 		return true
 	end
 
+	end -- /do
 	local function flatDist(a, b)
 		return Vector3.new(a.X - b.X, 0, a.Z - b.Z).Magnitude
 	end
 
-	local function tpReach(target, id, stopDist)
+	function tpReach(target, id, stopDist)
 		local reachDist = stopDist + 9
 		for attempt = 1, 3 do
 			if not stAlive(id) then
@@ -4636,6 +4658,7 @@ local FarmSystem = {
 		return moveTo(target, id, stopDist, nil, true)
 	end
 
+	end
 	-- Teleport move mode for other features. Returns true when we ended up at the target.
 	-- Same recipe as Auto Steal: from 2+ zones away break an egg here, get hit by the guard, then teleport.
 	-- o = { part, stop, alive, say }
