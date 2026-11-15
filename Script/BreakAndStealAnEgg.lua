@@ -593,7 +593,7 @@ local FarmSystem = {
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
-	for z = 1, 13 do
+	for z = 1, 14 do
 		TT.Zone[z] = true
 		SW.Zone[z] = true
 	end
@@ -1198,7 +1198,7 @@ local FarmSystem = {
 	local RARITY_ZONES = {
 		Common = { 1 }, Uncommon = { 2 }, Rare = { 3 }, Epic = { 4 }, Legendary = { 5 }, Mythic = { 6 },
 		Divine = { 7 }, Cosmic = { 8 }, Secret = { 9 }, Celestial = { 10 }, Inferno = { 7, 11 },
-		Void = { 7, 12 }, Omega = { 7, 12, 13 }, Spectral = { 12, 13 }, Ethereal = { 13 },
+		Void = { 7, 12 }, Omega = { 7, 12, 13 }, Spectral = { 12, 13, 14 }, Ethereal = { 13, 14 }, Primordial = { 14 },
 	}
 
 	local function swFarMapLoaded()
@@ -1209,7 +1209,7 @@ local FarmSystem = {
 		end
 		local chosen = {}
 		if next(SW.Zone) == nil then
-			for z = DIVINE_ZONE + 1, 13 do
+			for z = DIVINE_ZONE + 1, 14 do
 				chosen[z] = true
 			end
 		else
@@ -1237,12 +1237,18 @@ local FarmSystem = {
 				end
 			end
 		end
+		local missing
 		for z in pairs(need) do
 			local zf = zb:FindFirstChild("Zone" .. z)
 			local eggs = zf and zf:FindFirstChild("Eggs")
 			if not (eggs and #eggs:GetChildren() > 0) then
-				return false
+				if not missing or z < missing then
+					missing = z
+				end
 			end
+		end
+		if missing then
+			return false, missing
 		end
 		return true
 	end
@@ -1262,7 +1268,7 @@ local FarmSystem = {
 			return false
 		end
 		local r = getHRP()
-		if r and r.Position.X <= DIVINE_X[2] + 5 and r.Position.X >= DIVINE_X[1] - 5 then
+		if r and r.Position.X <= DIVINE_X[2] + 5 then
 			return false
 		end
 		return os.clock() >= (SW.DivineAt or 0)
@@ -1311,7 +1317,7 @@ local FarmSystem = {
 		[1] = { -174.5, -81.5 }, [2] = { -304.0, -187.0 }, [3] = { -463.2, -315.8 },
 		[4] = { -681.8, -475.2 }, [5] = { -960.8, -694.2 }, [6] = { -1299.8, -973.2 },
 		[7] = { -1819.5, -1311.5 }, [8] = { -2338.0, -1831.0 }, [9] = { -2863.0, -2350.0 },
-		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 },
+		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 }, [14] = { -6732.0, -5834.0 },
 	}
 
 	local function swPatrol(id)
@@ -1324,14 +1330,14 @@ local FarmSystem = {
 						want[z] = true
 					end
 				else
-					for z = 1, 13 do
+					for z = 1, 14 do
 						want[z] = true
 					end
 				end
 			end
 		end
 		local zl = {}
-		for z = 1, 13 do
+		for z = 1, 14 do
 			if (next(SW.Zone) == nil or SW.Zone[z]) and want[z] then
 				zl[#zl + 1] = z
 			end
@@ -1347,6 +1353,33 @@ local FarmSystem = {
 		setSwStatus("Nothing to break here -> checking zone " .. z)
 		swGoTo(Vector3.new((rng[1] + rng[2]) / 2, 3.693, 0), id)
 		SW.Working = false
+	end
+
+	local function swFarWalk(id)
+		local loaded, zone = swFarMapLoaded()
+		if loaded or not zone then
+			return false
+		end
+		local r = getHRP()
+		local rng = SW_ZONE_X[zone]
+		if not r or not rng then
+			return false
+		end
+		local tx = (rng[1] + rng[2]) / 2
+		local cx = r.Position.X
+		if math.abs(cx - tx) < 12 then
+			return false
+		end
+		local step = math.clamp(tx, cx - 60, cx + 60)
+		SW.Working = true
+		TMX.Exit()
+		setSwStatus("Eggs of zone " .. zone .. " not visible yet -> walking on")
+		local function alive()
+			return swAlive(id) and not breakBlocked()
+		end
+		realWalk(Vector3.new(step, 3.693, 0), 6, alive)
+		SW.Working = false
+		return true
 	end
 
 	local function breakLoop(id)
@@ -1419,6 +1452,8 @@ local FarmSystem = {
 					swGoTo(DIVINE_POS, id)
 					SW.DivineAt = os.clock() + 4
 					task.wait(0.5)
+					elseif not e and swFarWalk(id) then
+						task.wait()
 					elseif not e then
 						SW.Working = false
 						SW.CurPart = nil
@@ -2668,9 +2703,7 @@ local FarmSystem = {
 
 		local MUT_COLORS = {
 			Gold = "#FFD24A", Diamond = "#4FD8FF", Lucky = "#5BE37D", Lightning = "#FFEE58",
-			Angelic = "#F2F2FF", Frozen = "#8CDCFF", ["Fallen Angel"] = "#B48CFF",
-			["Fallen Angel Gold"] = "#FFC878", ["Fallen Angel Diamond"] = "#82E6FF",
-			["Devil Gold"] = "#FF7850", ["Devil Diamond"] = "#FF5A8C",
+			Angelic = "#F2F2FF", Frozen = "#8CDCFF",
 			Void = "#9B6BFF", Time = "#4DD0E1", Hacker = "#39FF14",
 		}
 		local MUT_ORDER = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky", "Void", "Time", "Hacker" }
@@ -3353,7 +3386,7 @@ local FarmSystem = {
 	local nearestGuard, flingRemote, flingAt, tpReach
 	do
 	local SW_ZONES = {}
-	for z = 1, 13 do
+	for z = 1, 14 do
 		SW_ZONES[z] = "Zone " .. z
 	end
 	Dropdown(Page, "Egg Zone", {
@@ -3402,7 +3435,7 @@ local FarmSystem = {
 		end,
 	})
 	local TT_ZONES = {}
-	for z = 1, 13 do
+	for z = 1, 14 do
 		TT_ZONES[z] = "Zone " .. z
 	end
 	Dropdown(Page, "Titanic Zones", {
@@ -3444,12 +3477,12 @@ local FarmSystem = {
 		[1] = { -174.5, -81.5 }, [2] = { -304.0, -187.0 }, [3] = { -463.2, -315.8 },
 		[4] = { -681.8, -475.2 }, [5] = { -960.8, -694.2 }, [6] = { -1299.8, -973.2 },
 		[7] = { -1819.5, -1311.5 }, [8] = { -2338.0, -1831.0 }, [9] = { -2863.0, -2350.0 },
-		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 },
+		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 }, [14] = { -6732.0, -5834.0 },
 	}
 	stJob = 0
 
 	function inAnyZone(pos)
-		return pos.X <= ZONE_X[1][2] and pos.X >= ZONE_X[13][1] - 5
+		return pos.X <= ZONE_X[1][2] and pos.X >= ZONE_X[14][1] - 5
 	end
 	EventGate.Safe = SAFE
 	EventGate.InZone = inAnyZone
@@ -3848,7 +3881,7 @@ local FarmSystem = {
 	end
 
 	MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky",
-		"Void", "Time", "Hacker", "Fallen Angel", "Fallen Angel Gold", "Fallen Angel Diamond", "Devil Gold", "Devil Diamond" }
+		"Void", "Time", "Hacker" }
 	local MUT_CANON = {}
 	for _, n in ipairs(MUT_NAMES) do MUT_CANON[n:lower()] = n end
 
