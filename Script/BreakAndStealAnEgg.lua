@@ -2736,11 +2736,11 @@ local FarmSystem = {
 		end
 
 		local MUT_COLORS = {
-			Gold = "#FFD24A", Diamond = "#4FD8FF", Lucky = "#5BE37D", Lightning = "#FFEE58",
+			Gold = "#FFD24A", Diamond = "#4FD8FF", Lightning = "#FFEE58",
 			Angelic = "#F2F2FF", Frozen = "#8CDCFF",
 			Void = "#9B6BFF", Time = "#4DD0E1", Hacker = "#39FF14",
 		}
-		local MUT_ORDER = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky", "Void", "Time", "Hacker" }
+		local MUT_ORDER = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Void", "Time", "Hacker" }
 
 		local function tx(s)
 			local ok, r = pcall(TrDyn, s)
@@ -3914,8 +3914,9 @@ local FarmSystem = {
 		return inc >= minInc
 	end
 
-	MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Lucky",
-		"Void", "Time", "Hacker" }
+	-- exactly the buffs an animal can have: the children of AnimalOverhead > Mutation in the game (no "Lucky": that one
+	-- only exists on eggs, EggInfoUi)
+	MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Void", "Time", "Hacker" }
 	local MUT_CANON = {}
 	for _, n in ipairs(MUT_NAMES) do MUT_CANON[n:lower()] = n end
 
@@ -3936,18 +3937,15 @@ local FarmSystem = {
 		local found, source = {}, nil
 		local function addValue(v, from)
 			if typeof(v) ~= "string" or v == "" then return end
-			local canon = MUT_CANON[v:lower()]
-			if canon then
-				found[canon] = true
-			else
-
-				local hit = false
-				for low, n in pairs(MUT_CANON) do
-					if v:lower():find(low, 1, true) then found[n] = true; hit = true end
+			-- split "Gold, Diamond" / "Gold_Diamond" / "GoldDiamond" into whole words and keep only real buffs
+			local spaced = v:gsub("(%l)(%u)", "%1 %2"):gsub("[^%a]+", " ")
+			for word in spaced:gmatch("%a+") do
+				local canon = MUT_CANON[word:lower()]
+				if canon then
+					found[canon] = true
+					source = source or from
 				end
-				if not hit then found[v] = true end
 			end
-			source = source or from
 		end
 		local function scanAttrs(inst)
 			if not inst then return end
@@ -4017,6 +4015,9 @@ local FarmSystem = {
 		local total = 0
 		for _, o in ipairs(folder:GetChildren()) do
 			local part = getPart(o)
+			if part and ST.PlacedHas(o.Name, part.Position) then
+				part = nil
+			end
 
 			if part and ST.CE.Mode
 				and (Vector3.new(part.Position.X - ST.CE.Pos.X, 0, part.Position.Z - ST.CE.Pos.Z).Magnitude <= 120
@@ -4206,7 +4207,7 @@ local FarmSystem = {
 
 	function moveTo(target, id, stopDist, abortFn, forceWalk, abortEvery, speed)
 		stopDist = stopDist or 2.5
-		if not TPX.Dismount(function()
+		if not ((ST.TpMode or ST.Ext) and ST.TpArmed and not forceWalk) and not TPX.Dismount(function()
 			return stAlive(id) and not EventGate.Abort
 		end) then
 			return false
@@ -4235,22 +4236,18 @@ local FarmSystem = {
 			local np = Vector3.new(pos.X, GROUND_Y, pos.Z)
 			local far = (hrp.Position - np).Magnitude > 200
 			if far then
-
-				ST.PrepareLanding(np)
-				if not stAlive(id) or EventGate.Abort then
-					return false
-				end
-				hrp = getHRP()
-				if not hrp then
-					return false
-				end
+				-- ask the game to stream the destination in, but do not wait: teleport right now
+				task.spawn(function()
+					pcall(function()
+						LocalPlayer:RequestStreamAroundAsync(np, 1.5)
+					end)
+				end)
 			end
 			hrp.CFrame = CFrame.new(np)
 			hrp.AssemblyLinearVelocity = Vector3.zero
 			if far then
 				ST.HoldLanding(np, id)
 			end
-			RunService.Heartbeat:Wait()
 			return true
 		end
 
@@ -4332,7 +4329,7 @@ local FarmSystem = {
 		return false
 	end
 
-	local function findPrompt(obj, part, allowGlobal)
+	function ST.findPrompt(obj, part, allowGlobal)
 		local found
 		for _, d in ipairs(obj:GetDescendants()) do
 			if d:IsA("ProximityPrompt") then
@@ -4366,7 +4363,7 @@ local FarmSystem = {
 		end
 	end
 
-	local function promptPos(prompt, part)
+	function ST.promptPos(prompt, part)
 		local p = prompt and prompt.Parent
 		if p then
 			if p:IsA("Attachment") then
@@ -4386,12 +4383,22 @@ local FarmSystem = {
 			prompt.RequiresLineOfSight = false
 			prompt.HoldDuration = 0
 		end)
-		if fireproximityprompt and attempt % 3 ~= 0 then
+		if fireproximityprompt then
 			pcall(fireproximityprompt, prompt)
+			if attempt % 8 == 0 then
+				-- slow fallback in the background, it never blocks the pickup loop
+				task.spawn(function()
+					pcall(function()
+						prompt:InputHoldBegin()
+						task.wait(0.05)
+						prompt:InputHoldEnd()
+					end)
+				end)
+			end
 		else
 			pcall(function()
 				prompt:InputHoldBegin()
-				task.wait(0.1)
+				task.wait(0.05)
 				prompt:InputHoldEnd()
 			end)
 		end
@@ -4469,38 +4476,38 @@ local FarmSystem = {
 		local beforeSet = snapshotCarried()
 		local result = false
 		local invalid = false
-		local t0, tries, lastGlobal = os.clock(), 0, 0
+		local t0, tries, lastGlobal, nextVerify = os.clock(), 0, 0, 0
 		while stAlive(id) and os.clock() - t0 < 10 do
 			if isStolen(obj, before) then
 				result = true
 				break
 			end
-			if not skipVerify and not verifyTarget(obj) then
-				invalid = true
-				break
+			if not skipVerify and os.clock() >= nextVerify then
+				nextVerify = os.clock() + 0.25
+				if not verifyTarget(obj) then
+					invalid = true
+					break
+				end
 			end
 			local allowGlobal = os.clock() - lastGlobal > 1.5
 			if allowGlobal then
 				lastGlobal = os.clock()
 			end
-			local prompt = findPrompt(obj, part, allowGlobal)
+			local prompt = ST.findPrompt(obj, part, allowGlobal)
 			if prompt then
-				local pp = promptPos(prompt, part)
+				local pp = ST.promptPos(prompt, part)
 				lockPos = pp and groundClamp(pp) or lockPos
 				tries += 1
-				stStatus(("Stealing %s (try %d)"):format(obj.Name, tries))
-				if tries == 1 and not skipVerify then
-					sleep(0.05, id)
-				end
-				if not stAlive(id) then
-					break
+				if tries == 1 or tries % 10 == 0 then
+					stStatus(("Stealing %s (try %d)"):format(obj.Name, tries))
 				end
 				firePrompt(prompt, tries)
 			else
 				lockPos = (part and part.Parent and groundClamp(part.Position)) or lockPos
 				stStatus("Steal prompt not found for " .. obj.Name)
 			end
-			if not sleep(skipVerify and 0.03 or 0.15, id) then
+			RunService.Heartbeat:Wait()
+			if not stAlive(id) then
 				break
 			end
 		end
@@ -4960,11 +4967,25 @@ local FarmSystem = {
 		return reached
 	end
 
+	-- animals that were held and then put down: never picked up again (matched by name near where they were put down)
+	ST.Placed = {}
+	function ST.PlacedHas(name, pos)
+		for _, r in ipairs(ST.Placed) do
+			if r.name == name and (not r.pos or (r.pos - pos).Magnitude <= 80) then
+				return true
+			end
+		end
+		return false
+	end
+
 	function ST.CE.Dest()
 		return ST.CE.Mode and ST.CE.Pos or SAFE
 	end
 
-	track(RunService.Stepped:Connect(function()
+	-- noclip the whole time Carry Escape is ON (walking, teleporting, waiting): applied on Stepped AND Heartbeat so the
+	-- game turning collisions back on in between cannot block us
+	ST.CE.Parts = { list = {}, char = nil, at = 0 }
+	function ST.CE.Noclip()
 		if not ST.CE.Running then
 			return
 		end
@@ -4972,14 +4993,18 @@ local FarmSystem = {
 		if not c then
 			return
 		end
-
-		local root = c:FindFirstChild("HumanoidRootPart")
-		if not root or ((root.Position - ST.CE.Pos).Magnitude > 120 and not (inAnyZone(root.Position) and zoneIdx(root.Position) == 1)) then
-			ST.CE.Restore()
-			return
+		local P = ST.CE.Parts
+		local now = os.clock()
+		if P.char ~= c or now - P.at > 0.5 then
+			P.char, P.at, P.list = c, now, {}
+			for _, d in ipairs(c:GetDescendants()) do
+				if d:IsA("BasePart") then
+					P.list[#P.list + 1] = d
+				end
+			end
 		end
-		for _, d in ipairs(c:GetDescendants()) do
-			if d:IsA("BasePart") then
+		for _, d in ipairs(P.list) do
+			if d.Parent then
 				if ST.CE.Orig[d] == nil then
 					ST.CE.Orig[d] = d.CanCollide
 				end
@@ -4988,7 +5013,9 @@ local FarmSystem = {
 				end
 			end
 		end
-	end))
+	end
+	track(RunService.Stepped:Connect(ST.CE.Noclip))
+	track(RunService.Heartbeat:Connect(ST.CE.Noclip))
 
 	function ST.CE.Restore()
 		for part, was in pairs(ST.CE.Orig) do
@@ -5085,6 +5112,25 @@ local FarmSystem = {
 		ST.HoldLanding(ST.CE.Pos, id)
 	end
 
+	-- Carry Escape, the short way (less than 2 zones from zone 1): walk to the escape spot with the character's own
+	-- speed (like Auto Collect Gems). Noclip is on the whole time, so walls do not stop it. If it cannot get there on
+	-- foot it teleports instead.
+	function ST.CE.WalkHome(id, holdFn)
+		holdFn = holdFn or ST.CE.Holding
+		setBusy(false)
+		local reached = realWalk(function()
+			return ST.CE.Pos
+		end, 5, function()
+			return stAlive(id) and not EventGate.Abort
+		end, function()
+			return not holdFn()
+		end, 0.1)
+		if not reached and stAlive(id) and not EventGate.Abort and holdFn() then
+			ST.CE.Warp(id, holdFn)
+		end
+		setBusy(false)
+	end
+
 	local function returnToSpot(id, pos, armed)
 		if not stAlive(id) or not pos then
 			return
@@ -5168,8 +5214,8 @@ local FarmSystem = {
 					ST.CE.Tried = true
 					claimWork(id)
 					setBusy(true)
-					stStatus("Zone 1 -> teleporting to the escape spot")
-					ST.CE.Warp(id)
+					stStatus("Zone 1 -> walking to the escape spot")
+					ST.CE.WalkHome(id)
 					setBusy(false)
 					ST.Working = false
 				else
@@ -5260,11 +5306,24 @@ local FarmSystem = {
 			local function toAnimal()
 				return e.part.Parent and e.part.Position or nil
 			end
+			-- true as soon as the "Steal" prompt is in range: stop walking and start collecting right away
+			local function promptReady()
+				if not e.part.Parent then
+					return false
+				end
+				local pr = ST.findPrompt(e.obj, e.part, false)
+				local h = getHRP()
+				if not (pr and h) then
+					return false
+				end
+				local pp = ST.promptPos(pr, e.part)
+				return pp ~= nil and (pp - h.Position).Magnitude <= math.clamp(pr.MaxActivationDistance - 1, 3, 30)
+			end
 			if ST.TpMode and ST.TpArmed then
 				tpReach(toAnimal, id, 3)
 				ST.TpArmed = false
 			else
-				moveTo(toAnimal, id, 3)
+				moveTo(toAnimal, id, 3, promptReady, false, 0.05)
 			end
 			if not stAlive(id) then
 				break
@@ -5301,7 +5360,7 @@ local FarmSystem = {
 					stStatus(("Retry %d: %s"):format(attempt, e.obj.Name))
 					moveTo(function()
 						return e.part.Parent and e.part.Position or nil
-					end, id, 3)
+					end, id, 3, promptReady, false, 0.05)
 				end
 				ok, mine, invalid = collect(e.obj, e.part, id)
 				if ok or invalid then
@@ -5320,7 +5379,14 @@ local FarmSystem = {
 				local hpz = getHRP()
 
 				local zone1Out = ST.CE.Mode and ST.CE.InZone1(hpz and hpz.Position)
-				local deliverTp = ST.TpMode and not zone1Out
+				-- Carry Escape: 2+ zones away from zone 1 -> teleport (guard); closer -> walk home on foot
+				local ceFar = ST.CE.Mode and hpz ~= nil and zoneGap(hpz.Position, ST.CE.Pos) >= 2
+				local deliverTp
+				if ST.CE.Mode then
+					deliverTp = ceFar
+				else
+					deliverTp = ST.TpMode and not zone1Out
+				end
 				local histEntry = Stats.AddSteal(eMuts, eInfo or {})
 				stStatus("Stolen! Heading back to Safe Zone")
 				local DROP_NEAR_SAFE = 30
@@ -5349,7 +5415,7 @@ local FarmSystem = {
 				local function byGuard()
 					if flingRemote then
 						local t = os.clock()
-						while os.clock() - t < 0.3 and os.clock() - flingAt > 1.5 do
+						while os.clock() - t < 0.15 and os.clock() - flingAt > 1.5 do
 							RunService.Heartbeat:Wait()
 						end
 						return os.clock() - flingAt <= 1.5
@@ -5396,6 +5462,11 @@ local FarmSystem = {
 					return nil
 				end
 				local function recover(hitByGuard)
+					if ST.CE.Mode and not hitByGuard then
+						-- Carry Escape: it was put down on purpose (not knocked out of the hands by a guard): do not take it again
+						finished = true
+						return true
+					end
 					local obj, part = awaitDropped(1.2)
 					if not (obj and part) then
 						return false
@@ -5473,7 +5544,7 @@ local FarmSystem = {
 							moveTo(ST.CE.Dest(), id, 2.5)
 						end
 						local t3 = os.clock()
-						local safeWait = ST.CE.Mode and 0 or 0.5
+						local safeWait = ST.CE.Mode and 0 or 0.2
 						while stAlive(id) and os.clock() - t3 < safeWait and holding() do
 							RunService.Heartbeat:Wait()
 						end
@@ -5493,8 +5564,7 @@ local FarmSystem = {
 					else
 						ST.TpArmed = false
 						if ST.CE.Mode then
-							ST.CE.Warp(id, holding)
-							setBusy(false)
+							ST.CE.WalkHome(id, holding)
 						else
 							moveTo(ST.CE.Dest(), id, nil, lost, false, 0.05)
 						end
@@ -5514,6 +5584,24 @@ local FarmSystem = {
 							finished = true
 						end
 					end
+				end
+
+				if finished and not gone and curObj then
+					-- remember this animal: once it is put down it is never picked up again
+					local nm, ob = curObj.Name, curObj
+					skip[ob] = math.huge
+					task.spawn(function()
+						local t4 = os.clock()
+						while stJob == id and holding() and os.clock() - t4 < 900 do
+							task.wait(0.25)
+						end
+						local h = getHRP()
+						local list = ST.Placed
+						list[#list + 1] = { name = nm, pos = h and h.Position or nil }
+						if #list > 40 then
+							table.remove(list, 1)
+						end
+					end)
 				end
 
 				if gone then
@@ -5592,20 +5680,32 @@ local FarmSystem = {
 	Section(Page, "Auto Steal")
 	setStStatus = StatusCard(Page, "Idle   |   Stolen: 0")
 	_, stToggle = Toggle(Page, "Auto Steal", false, function(on)
-		if on then
-			if ST.CE.Mode then
-				ST.CE.Stop()
-				pcall(function()
-					ST.CE.Toggle.Set(false, true)
-				end)
-			end
-			if not stStart() then
-				stToggle.Set(false, true)
+		warn("[LUNAR Hub] Auto Steal toggle pressed: " .. tostring(on))
+		local okc, errc = xpcall(function()
+			if on then
+				if ST.CE.Mode then
+					ST.CE.Stop()
+					pcall(function()
+						ST.CE.Toggle.Set(false, true)
+					end)
+				end
+				if not stStart() then
+					stToggle.Set(false, true)
+				else
+					stStatus("Started")
+				end
 			else
-				stStatus("Started")
+				stStop()
 			end
-		else
-			stStop()
+		end, function(m)
+			return debug.traceback(tostring(m), 2)
+		end)
+		if not okc then
+			warn("[LUNAR Hub] Auto Steal toggle error: " .. tostring(errc))
+			pcall(Notify, "Auto Steal error - see console", false)
+			pcall(function()
+				stToggle.Set(false, true)
+			end)
 		end
 	end, nil, "Best animal first. Pauses Auto Break while it works")
 	local STEAL_DEFAULT = { "Primordial", "Ethereal", "Spectral", "Omega", "Void", "Inferno", "Celestial" }
@@ -5684,7 +5784,7 @@ local FarmSystem = {
 		else
 			ST.CE.Stop()
 		end
-	end, nil, "Finds animals by itself (its own Rarity / Min Income), steals them and teleports straight to the escape spot outside the map instead of the Safe Zone. Once there you can walk and drop the animal; a dropped animal is not picked up again by itself. Noclip while ON. Turns Auto Steal OFF (they share the same loop)")
+	end, nil, "Finds animals by itself (its own Rarity / Min Income), steals them and takes them to the escape spot outside the map instead of the Safe Zone: it teleports when it is 2+ zones away from zone 1, otherwise it walks there at the character's own speed. An animal that is put down is never picked up again. Noclip all the time while ON. Turns Auto Steal OFF (they share the same loop)")
 	Dropdown(Page2, "Carry Escape Rarity", {
 		Multi = true,
 		Options = STEAL_RARITIES,
@@ -6259,7 +6359,7 @@ local TRANSLATIONS = {
 	{ en = "Auto Carry Escape", th = "วาปหนีเมื่อถือสัตว์" },
 	{ en = "Carry Escape Rarity", th = "ความหายากของวาปหนี" },
 	{ en = "Carry Escape Min Income / s", th = "รายได้ขั้นต่ำ / วินาที ของวาปหนี" },
-	{ en = "Finds animals by itself (its own Rarity / Min Income), steals them and teleports straight to the escape spot outside the map instead of the Safe Zone. Once there you can walk and drop the animal; a dropped animal is not picked up again by itself. Noclip while ON. Turns Auto Steal OFF (they share the same loop)", th = "หาสัตว์เอง (ใช้ความหายากและรายได้ขั้นต่ำของตัวเอง) ขโมยแล้ววาปไปจุดหนีนอกแมพแทนโซนปลอดภัย เปิด noclip ตลอดที่เปิดอยู่ จะปิด Auto Steal (ใช้ลูปเดียวกัน)" },
+	{ en = "Finds animals by itself (its own Rarity / Min Income), steals them and takes them to the escape spot outside the map instead of the Safe Zone: it teleports when it is 2+ zones away from zone 1, otherwise it walks there at the character's own speed. An animal that is put down is never picked up again. Noclip all the time while ON. Turns Auto Steal OFF (they share the same loop)", th = "หาสัตว์เอง (ใช้ความหายากและรายได้ขั้นต่ำของตัวเอง) ขโมยแล้วพาไปจุดหนีนอกแมพแทนโซนปลอดภัย ถ้าอยู่ห่างโซน 1 ตั้งแต่ 2 โซนขึ้นไปจะวาป ถ้าใกล้กว่านั้นจะเดินเองด้วยความเร็วตัวละคร สัตว์ที่วางลงแล้วจะไม่ถูกเก็บซ้ำ เปิด noclip ตลอดเวลาที่เปิดอยู่ จะปิด Auto Steal (ใช้ลูปเดียวกัน)" },
 	{ en = "Auto Sell", th = "ขายอัตโนมัติ" },
 	{ en = "Auto Place Eggs", th = "วางไข่อัตโนมัติ" },
 	{ en = "Your plot was not found", th = "ไม่พบพล็อตของคุณ" },
