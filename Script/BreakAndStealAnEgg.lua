@@ -4376,7 +4376,18 @@ local FarmSystem = {
 		return part and part.Position
 	end
 
-	local function firePrompt(prompt, attempt)
+	local function firePrompt(prompt, attempt, id)
+		-- remember the prompt's own hold time before it is set to 0: some prompts (e.g. buffed animals) only accept a
+		-- real hold of that duration
+		ST.HoldOrig = ST.HoldOrig or setmetatable({}, { __mode = "k" })
+		local hd = ST.HoldOrig[prompt]
+		if hd == nil then
+			local okh, v = pcall(function()
+				return prompt.HoldDuration
+			end)
+			hd = okh and tonumber(v) or 0
+			ST.HoldOrig[prompt] = hd
+		end
 		pcall(function()
 			prompt.Enabled = true
 			prompt.MaxActivationDistance = 60
@@ -4385,7 +4396,34 @@ local FarmSystem = {
 		end)
 		if fireproximityprompt then
 			pcall(fireproximityprompt, prompt)
-			if attempt % 8 == 0 then
+			if hd > 0.05 and attempt >= 2 then
+				-- the quick way did not pick it up: hold the button for real, for the prompt's own hold time
+				if attempt == 2 then
+					pcall(function()
+						local p = prompt.Parent
+						local pos = p and (p:IsA("Attachment") and p.WorldPosition or p:IsA("BasePart") and p.Position)
+						local h = getHRP()
+						warn(("[LUNAR Hub] Steal prompt of %s: ActionText=%s HoldDuration=%.2f distance=%s"):format(
+							tostring(p and p.Parent and p.Parent.Name or "?"),
+							tostring(prompt.ActionText),
+							hd,
+							(pos and h) and tostring(math.floor((pos - h.Position).Magnitude)) or "?"
+						))
+					end)
+				end
+				pcall(function()
+					prompt.HoldDuration = hd
+					prompt:InputHoldBegin()
+				end)
+				local t = os.clock()
+				while os.clock() - t < hd + 0.15 and prompt.Parent and (not id or stAlive(id)) do
+					RunService.Heartbeat:Wait()
+				end
+				pcall(function()
+					prompt:InputHoldEnd()
+					prompt.HoldDuration = 0
+				end)
+			elseif attempt % 8 == 0 then
 				-- slow fallback in the background, it never blocks the pickup loop
 				task.spawn(function()
 					pcall(function()
@@ -4501,7 +4539,7 @@ local FarmSystem = {
 				if tries == 1 or tries % 10 == 0 then
 					stStatus(("Stealing %s (try %d)"):format(obj.Name, tries))
 				end
-				firePrompt(prompt, tries)
+				firePrompt(prompt, tries, id)
 			else
 				lockPos = (part and part.Parent and groundClamp(part.Position)) or lockPos
 				stStatus("Steal prompt not found for " .. obj.Name)
