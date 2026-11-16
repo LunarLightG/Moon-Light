@@ -421,7 +421,7 @@ local FarmSystem = {
 	local Page2 = CreatePage("Extras")
 	CreateTab("Extras", "9013498676")
 
-	local BREAK_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal" }
+	local BREAK_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial" }
 	local STEAL_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial" }
 	local RANK = {}
 	for i, r in ipairs(STEAL_RARITIES) do
@@ -440,6 +440,64 @@ local FarmSystem = {
 	local function getHumanoid()
 		local c = LocalPlayer.Character
 		return c and c:FindFirstChildOfClass("Humanoid")
+	end
+
+	do
+		local RIDE = ENV.LunarRideSpy
+		if type(RIDE) ~= "table" then
+			RIDE = { Installed = false }
+			ENV.LunarRideSpy = RIDE
+		end
+		if not RIDE.Installed and type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
+			RIDE.Installed = true
+			local wrapFn = type(newcclosure) == "function" and newcclosure or function(f)
+				return f
+			end
+			local oldNc
+			pcall(function()
+				oldNc = hookmetamethod(game, "__namecall", wrapFn(function(self, ...)
+					local m = getnamecallmethod()
+					if (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance" and self.Name == "RideRemote" then
+						RIDE.Args = table.pack(...)
+					end
+					return oldNc(self, ...)
+				end))
+			end)
+		end
+		function TPX.Dismount(alive)
+			if LocalPlayer:GetAttribute("Mounted") ~= true then
+				return true
+			end
+			local remote = game:GetService("ReplicatedStorage"):FindFirstChild("RideRemote")
+			local a = RIDE.Args
+			local tries, lastMsg = 0, 0
+			while LocalPlayer:GetAttribute("Mounted") == true do
+				if alive and not alive() then
+					return false
+				end
+				if remote and a and tries < 2 then
+					tries += 1
+					pcall(function()
+						if remote:IsA("RemoteFunction") then
+							remote:InvokeServer(table.unpack(a, 1, a.n))
+						else
+							remote:FireServer(table.unpack(a, 1, a.n))
+						end
+					end)
+					local t = os.clock()
+					while os.clock() - t < 1.2 and LocalPlayer:GetAttribute("Mounted") == true do
+						task.wait(0.1)
+					end
+				else
+					if os.clock() - lastMsg > 6 then
+						lastMsg = os.clock()
+						pcall(Notify, "Mounted - please dismount first", false)
+					end
+					task.wait(0.25)
+				end
+			end
+			return true
+		end
 	end
 
 	local realWalk
@@ -507,6 +565,9 @@ local FarmSystem = {
 		end
 		local hrp0, p0 = getHRP(), resolve()
 		if not hrp0 or not p0 then
+			return false
+		end
+		if not TPX.Dismount(alive) then
 			return false
 		end
 		local off0 = Vector3.new(p0.X - hrp0.Position.X, 0, p0.Z - hrp0.Position.Z).Magnitude
@@ -1253,27 +1314,6 @@ local FarmSystem = {
 		return true
 	end
 
-	local function swNeedDivineStop()
-		local far = false
-		for z in pairs(SW.Zone) do
-			if z > DIVINE_ZONE then
-				far = true
-				break
-			end
-		end
-		if next(SW.Zone) == nil then
-			far = true
-		end
-		if not far or swFarMapLoaded() then
-			return false
-		end
-		local r = getHRP()
-		if r and r.Position.X <= DIVINE_X[2] + 5 then
-			return false
-		end
-		return os.clock() >= (SW.DivineAt or 0)
-	end
-
 	local function swGoTo(pos, id)
 		local function alive()
 			return swAlive(id) and not breakBlocked()
@@ -1355,7 +1395,10 @@ local FarmSystem = {
 		SW.Working = false
 	end
 
-	local function swFarWalk(id)
+	local function swFarTeleport(id)
+		if os.clock() < (SW.FarAt or 0) then
+			return false
+		end
 		local loaded, zone = swFarMapLoaded()
 		if loaded or not zone then
 			return false
@@ -1365,19 +1408,14 @@ local FarmSystem = {
 		if not r or not rng then
 			return false
 		end
-		local tx = (rng[1] + rng[2]) / 2
-		local cx = r.Position.X
-		if math.abs(cx - tx) < 12 then
+		if r.Position.X <= rng[2] + 5 and r.Position.X >= rng[1] - 5 then
 			return false
 		end
-		local step = math.clamp(tx, cx - 60, cx + 60)
 		SW.Working = true
 		TMX.Exit()
-		setSwStatus("Eggs of zone " .. zone .. " not visible yet -> walking on")
-		local function alive()
-			return swAlive(id) and not breakBlocked()
-		end
-		realWalk(Vector3.new(step, 3.693, 0), 6, alive)
+		setSwStatus("Eggs of zone " .. zone .. " not loaded -> going there")
+		swGoTo(Vector3.new((rng[1] + rng[2]) / 2, 3.693, 0), id)
+		SW.FarAt = os.clock() + 2
 		SW.Working = false
 		return true
 	end
@@ -1445,14 +1483,7 @@ local FarmSystem = {
 				end
 				swSweepPending()
 				local e = scanEggs()[1]
-				if not e and swNeedDivineStop() then
-					SW.Working = true
-					TMX.Exit()
-					setSwStatus("The map of the chosen zone is not loaded -> going to the Divine zone first")
-					swGoTo(DIVINE_POS, id)
-					SW.DivineAt = os.clock() + 4
-					task.wait(0.5)
-					elseif not e and swFarWalk(id) then
+					if not e and swFarTeleport(id) then
 						task.wait()
 					elseif not e then
 						SW.Working = false
@@ -1688,6 +1719,9 @@ local FarmSystem = {
 			return
 		end
 		local holdCF = r.CFrame
+		if r.Position.Y > 9.7 then
+			holdCF = CFrame.new(r.Position.X, 3.693, r.Position.Z) * (holdCF - holdCF.Position)
+		end
 		local lastEquip, lastChk, lastPress, lastStatus = 0, 0, 0, 0
 		local wasHolding = nil
 		while ttAlive(id) and not titanicBlocked() and eggAlive(part) do
@@ -3600,7 +3634,7 @@ local FarmSystem = {
 			return
 		end
 		freezeHumanoid()
-		if not ST.Noclip or ST.CE.Mode then
+		if not ST.Noclip or ST.CE.Mode or ST.Walking then
 			return
 		end
 		local c = LocalPlayer.Character
@@ -4074,12 +4108,35 @@ local FarmSystem = {
 		return nil
 	end
 
+	function ST.Down()
+		if not flingRemote then
+			return true
+		end
+		local h = getHumanoid()
+		if not h then
+			return false
+		end
+		local st = h:GetState()
+		if h.PlatformStand or st == Enum.HumanoidStateType.Ragdoll or st == Enum.HumanoidStateType.FallingDown
+			or st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.PlatformStanding then
+			return true
+		end
+		local since = os.clock() - flingAt
+		if since <= 0.5 then
+			return true
+		end
+		if st == Enum.HumanoidStateType.Freefall and since <= 4 then
+			return true
+		end
+		return false
+	end
+
 	function ST.PrepareLanding(pos)
 		pcall(function()
 			LocalPlayer:RequestStreamAroundAsync(pos, 1.5)
 		end)
 		local t = os.clock()
-		while os.clock() - t < 1.5 and not floorRay(pos, 60, 200) do
+		while os.clock() - t < 0.4 and not floorRay(pos, 60, 200) do
 			RunService.Heartbeat:Wait()
 		end
 		return floorRay(pos, 60, 200) ~= nil
@@ -4087,7 +4144,7 @@ local FarmSystem = {
 
 	function ST.HoldLanding(pos, id)
 		local t = os.clock()
-		while os.clock() - t < 1.5 do
+		while os.clock() - t < 0.6 do
 			local hrp = getHRP()
 			if not hrp or (id and not stAlive(id)) then
 				return
@@ -4125,8 +4182,35 @@ local FarmSystem = {
 		end))
 	end
 
+	do
+		local airSince
+		track(RunService.Heartbeat:Connect(function()
+			if not (ST.Running or ST.Ext or SW.Running or TT.Running or (ST.CE and (ST.CE.Running or ST.CE.Mode))) then
+				airSince = nil
+				return
+			end
+			local hrp = getHRP()
+			if not hrp or hrp.Position.Y <= GROUND_Y + 8 or hrp.Position.Y > GROUND_Y + 120 or ST.Down() then
+				airSince = nil
+				return
+			end
+			local now = os.clock()
+			airSince = airSince or now
+			if now - airSince > 0.6 then
+				airSince = nil
+				hrp.CFrame = CFrame.new(hrp.Position.X, GROUND_Y, hrp.Position.Z) * (hrp.CFrame - hrp.CFrame.Position)
+				hrp.AssemblyLinearVelocity = Vector3.zero
+			end
+		end))
+	end
+
 	function moveTo(target, id, stopDist, abortFn, forceWalk, abortEvery, speed)
 		stopDist = stopDist or 2.5
+		if not TPX.Dismount(function()
+			return stAlive(id) and not EventGate.Abort
+		end) then
+			return false
+		end
 		local spd = speed or ST.Speed
 		local nextCheck = 0
 		local function resolve()
@@ -4139,6 +4223,9 @@ local FarmSystem = {
 		local pos = resolve()
 		if not hrp or not pos then
 			return false
+		end
+		if (ST.TpMode or ST.Ext) and ST.TpArmed and not forceWalk and not ST.Down() then
+			ST.TpArmed = false
 		end
 		if (ST.TpMode or ST.Ext) and ST.TpArmed and not forceWalk then
 
@@ -4167,6 +4254,15 @@ local FarmSystem = {
 			return true
 		end
 
+		if speed ~= ST.GuardSpeed then
+			restoreCollide()
+			ST.Walking = true
+			local okw = realWalk(target, stopDist, function()
+				return stAlive(id) and not EventGate.Abort
+			end, abortFn, abortEvery)
+			ST.Walking = false
+			return okw
+		end
 		local t0 = os.clock()
 		local off0 = Vector3.new(pos.X - hrp.Position.X, 0, pos.Z - hrp.Position.Z).Magnitude
 		local timeout = off0 / math.max(spd, 1) * 3 + 8
@@ -4302,7 +4398,7 @@ local FarmSystem = {
 	end
 
 	local function groundClamp(v)
-		return Vector3.new(v.X, math.clamp(v.Y, GROUND_Y, GROUND_Y + 5), v.Z)
+		return Vector3.new(v.X, GROUND_Y, v.Z)
 	end
 
 	local function verifyTarget(o)
@@ -4393,7 +4489,7 @@ local FarmSystem = {
 				lockPos = pp and groundClamp(pp) or lockPos
 				tries += 1
 				stStatus(("Stealing %s (try %d)"):format(obj.Name, tries))
-				if tries == 1 then
+				if tries == 1 and not skipVerify then
 					sleep(0.05, id)
 				end
 				if not stAlive(id) then
@@ -4404,7 +4500,7 @@ local FarmSystem = {
 				lockPos = (part and part.Parent and groundClamp(part.Position)) or lockPos
 				stStatus("Steal prompt not found for " .. obj.Name)
 			end
-			if not sleep(0.15, id) then
+			if not sleep(skipVerify and 0.03 or 0.15, id) then
 				break
 			end
 		end
@@ -4493,6 +4589,7 @@ local FarmSystem = {
 	end
 
 	ST.PrimeSpeed = 100
+	ST.GuardSpeed = 100
 
 	function ST.PrimeZone(pos)
 		local z = zoneIdx(pos)
@@ -4754,7 +4851,7 @@ local FarmSystem = {
 					return g.Parent and g.Position or nil
 				end, id, 8, function()
 					return not holding()
-				end, true, 0.05, ST.PrimeSpeed)
+				end, true, 0.05, ST.GuardSpeed)
 			end
 			local t2 = os.clock()
 			while stAlive(id) and os.clock() - t2 < 3 and holding() do
@@ -4805,7 +4902,6 @@ local FarmSystem = {
 			if hrp and pos and flatDist(hrp.Position, pos) <= reachDist then
 				return true
 			end
-			sleep(0.15, id)
 		end
 		if not stAlive(id) then
 			return false
@@ -5300,13 +5396,13 @@ local FarmSystem = {
 					return nil
 				end
 				local function recover(hitByGuard)
-					local obj, part = awaitDropped(2.5)
+					local obj, part = awaitDropped(1.2)
 					if not (obj and part) then
 						return false
 					end
 					stStatus("Animal dropped -> picking it up again")
 					local armed = ST.TpArmed
-					ST.TpArmed = ST.TpMode and hitByGuard
+					ST.TpArmed = ST.TpMode and hitByGuard and ST.Down()
 					moveTo(function()
 						return part.Parent and part.Position or nil
 					end, id, 3)
@@ -5343,9 +5439,9 @@ local FarmSystem = {
 								stStatus("Walking to the guard")
 								moveTo(function()
 									return g.Parent and g.Position or nil
-								end, id, 8, lost, true, 0.05, ST.PrimeSpeed)
-								local t2 = os.clock()
-								while stAlive(id) and os.clock() - t2 < 3 and not lost() do
+								end, id, 8, lost, true, 0.05, ST.GuardSpeed)
+								local t2, fm = os.clock(), flingAt
+								while stAlive(id) and os.clock() - t2 < 3 and not lost() and flingAt <= fm do
 									RunService.Heartbeat:Wait()
 								end
 							end
@@ -5360,9 +5456,12 @@ local FarmSystem = {
 							end
 						elseif stAlive(id) then
 							guardTries = 3
+							if holding() and os.clock() - flingAt <= 1.5 then
+								tpHitDone = true
+							end
 						end
 					elseif deliverTp and tpHitDone then
-						ST.TpArmed = true
+						ST.TpArmed = ST.Down()
 
 						stStatus(ST.CE.Mode and "Teleport -> escape spot" or "Teleport -> Safe Zone")
 						if ST.CE.Mode then
@@ -5374,7 +5473,7 @@ local FarmSystem = {
 							moveTo(ST.CE.Dest(), id, 2.5)
 						end
 						local t3 = os.clock()
-						local safeWait = ST.CE.Mode and 0 or 2.5
+						local safeWait = ST.CE.Mode and 0 or 0.5
 						while stAlive(id) and os.clock() - t3 < safeWait and holding() do
 							RunService.Heartbeat:Wait()
 						end
