@@ -4004,6 +4004,7 @@ local FarmSystem = {
 
 	function getTargets(skip)
 		local list, skipped = {}, 0
+		ST.Ok = ST.Ok or setmetatable({}, { __mode = "k" })
 		ST.Unread = 0
 		ST.Why = ""
 		local folder = Workspace:FindFirstChild("AnimalPickups")
@@ -4058,6 +4059,7 @@ local FarmSystem = {
 					if skip[o] and skip[o] > os.clock() then
 						skipped += 1
 					else
+						ST.Ok[o] = true
 						table.insert(list, {
 							obj = o,
 							part = part,
@@ -4448,20 +4450,28 @@ local FarmSystem = {
 
 	local function verifyTarget(o)
 		if not (o and o.Parent) then
-			return false
+			return false, "the animal is gone"
 		end
 		local pf = Workspace:FindFirstChild("AnimalPickups")
 		if pf and not o:IsDescendantOf(pf) then
-			return false
+			return false, "it left AnimalPickups (already carried?)"
+		end
+		-- the scan already approved this animal (rarity / buff / income): reading the buff from the animal's
+		-- billboard again while standing next to it can flicker, so it is not judged a second time
+		if ST.Ok and ST.Ok[o] then
+			return true
 		end
 		local r = getRarity(o)
 		if not r or not FL().Rarity[r] then
-			return false
+			return false, "rarity " .. tostring(r) .. " not selected"
 		end
 		if chosenFrom((mutationsOf(o))) then
 			return true
 		end
-		return passIncome(o)
+		if passIncome(o) then
+			return true
+		end
+		return false, "no chosen buff and income below Min Income"
 	end
 
 	local function snapshotCarried()
@@ -4515,15 +4525,18 @@ local FarmSystem = {
 		local result = false
 		local invalid = false
 		local t0, tries, lastGlobal, nextVerify = os.clock(), 0, 0, 0
-		while stAlive(id) and os.clock() - t0 < 10 do
+		local limit = 10
+		while stAlive(id) and os.clock() - t0 < limit do
 			if isStolen(obj, before) then
 				result = true
 				break
 			end
 			if not skipVerify and os.clock() >= nextVerify then
 				nextVerify = os.clock() + 0.25
-				if not verifyTarget(obj) then
+				local okv, why = verifyTarget(obj)
+				if not okv then
 					invalid = true
+					warn("[LUNAR Hub] Steal: " .. tostring(obj.Name) .. " dropped while stealing: " .. tostring(why))
 					break
 				end
 			end
@@ -4540,6 +4553,28 @@ local FarmSystem = {
 					stStatus(("Stealing %s (try %d)"):format(obj.Name, tries))
 				end
 				firePrompt(prompt, tries, id)
+				local hv = ST.HoldOrig and ST.HoldOrig[prompt]
+				if hv and hv > 0.05 then
+					limit = math.max(limit, 10 + 3 * hv) -- a prompt that needs a real hold gets more time
+				end
+				if tries == 4 then
+					-- once per animal: what is on it (helps to see why a buffed animal does not get picked up)
+					pcall(function()
+						local plist = {}
+						for _, d in ipairs(obj:GetDescendants()) do
+							if d:IsA("ProximityPrompt") then
+								local hd = ST.HoldOrig and ST.HoldOrig[d] or d.HoldDuration
+								plist[#plist + 1] = ("%s[%s hold=%s on=%s]"):format(d.Name, tostring(d.ActionText), tostring(hd), tostring(d.Enabled))
+							end
+						end
+						local mnames = {}
+						for n in pairs((mutationsOf(obj))) do
+							mnames[#mnames + 1] = tostring(n)
+						end
+						warn(("[LUNAR Hub] Steal: %s still not picked up after %d tries. prompts=%d {%s} buffs={%s}"):format(
+							tostring(obj.Name), tries, #plist, table.concat(plist, ", "), table.concat(mnames, "+")))
+					end)
+				end
 			else
 				lockPos = (part and part.Parent and groundClamp(part.Position)) or lockPos
 				stStatus("Steal prompt not found for " .. obj.Name)
