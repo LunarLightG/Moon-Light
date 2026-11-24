@@ -392,7 +392,7 @@ function Stats.AddEgg(info)
 		Kind = "Egg",
 		At = os.time(),
 		AfkAt = select(2, pcall(Stats.AfkClock)),
-		Name = (tostring(info.Name or "?"):gsub("^%d+:%s*", "")),
+		Name = info.Name or "?",
 		Rarity = info.Rarity,
 		MaxHealth = info.MaxHealth,
 		Size = info.Size,
@@ -644,19 +644,19 @@ local FarmSystem = {
 	SW = {
 		Running = false, Job = 0, Speed = 150,
 		Order = "Largest first",
-		Rarity = { Common = true, Uncommon = true, Rare = true },
+		Rarity = { Primordial = true, Abyssal = true, Godly = true },
 		Yielded = false, Assumed = false, OnSig = nil, OffSig = nil, MonitorOff = false, ManualOff = false, EvtState = nil,
 		Working = false, TpMode = true,
 		Zone = {}, Pending = setmetatable({}, { __mode = "k" }), Skip = setmetatable({}, { __mode = "k" }),
 	}
 	ST = {
 		Running = false, Busy = false, Working = false, Noclip = true, SafeWait = false, AntiRagdoll = true,
-		Speed = 100, Rarity = {}, Mutation = {}, Collected = 0, MinIncome = 0, Unread = 0, TpMode = true, TpArmed = false,
+		Speed = 100, Rarity = {}, Mutation = { Void = true, Time = true, Hacker = true }, Collected = 0, MinIncome = 0, Unread = 0, TpMode = true, TpArmed = false,
 		CE = { Running = false, Busy = false, Job = 0, Failed = false, RetryAt = 0, Orig = setmetatable({}, { __mode = "k" }), Pos = Vector3.new(-119.387, 3.692, -186.409), Z1 = Vector3.new(-127.983, 3.692, 0), Mode = false },
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
-	for z = 1, 3 do
+	for z = 1, 15 do
 		TT.Zone[z] = true
 		SW.Zone[z] = true
 	end
@@ -2826,8 +2826,18 @@ local FarmSystem = {
 			return ("%d%s%s"):format(sec, sp, us)
 		end
 
+		-- "123 Dragon" / "123_Dragon" -> "Dragon" (display only; a name that is only digits stays as it is)
+		local function plainName(name)
+			name = tostring(name or "?")
+			local rest = name:gsub("^[%d%s%.,#:_%-]+", "")
+			if rest ~= "" then
+				return rest
+			end
+			return name
+		end
+
 		local function rowText(entry)
-			local head = Stats.RarityRich(entry.Rarity, entry.Name or "?", true)
+			local head = Stats.RarityRich(entry.Rarity, plainName(entry.Name), true)
 			if entry.Kind == "Steal" and entry.Muts and #entry.Muts > 0 then
 				local names = {}
 				for _, n in ipairs(entry.Muts) do
@@ -2989,7 +2999,7 @@ local FarmSystem = {
 				row.ph = New("TextLabel", {
 					Size = UDim2.fromScale(1, 1),
 					BackgroundTransparency = 1,
-					Text = firstChar(entry.Name),
+					Text = firstChar(plainName(entry.Name)),
 					Font = Enum.Font.GothamBold,
 					TextSize = 24,
 					TextColor3 = Stats.RarityColor3(entry.Rarity),
@@ -3408,7 +3418,7 @@ local FarmSystem = {
 	Dropdown(Page, "Egg Rarity", {
 		Multi = true,
 		Options = BREAK_RARITIES,
-		Default = { "Common", "Uncommon", "Rare" },
+		Default = { "Primordial", "Abyssal", "Godly" },
 		Placeholder = "Select rarity",
 		Desc = "Tap to choose one or more",
 		OnChange = function(chosen)
@@ -3428,7 +3438,7 @@ local FarmSystem = {
 	Dropdown(Page, "Egg Zone", {
 		Multi = true,
 		Options = SW_ZONES,
-		Default = { "Zone 1", "Zone 2", "Zone 3" },
+		Default = SW_ZONES,
 		Placeholder = "Select zone",
 		Format = function(names)
 			local nums = {}
@@ -3477,7 +3487,7 @@ local FarmSystem = {
 	Dropdown(Page, "Titanic Zones", {
 		Multi = true,
 		Options = TT_ZONES,
-		Default = { "Zone 1", "Zone 2", "Zone 3" },
+		Default = TT_ZONES,
 		Placeholder = "Select zone",
 		Format = function(names)
 			local nums = {}
@@ -5859,7 +5869,7 @@ local FarmSystem = {
 			end)
 		end
 	end, nil, "Best animal first. Pauses Auto Break while it works")
-	local STEAL_DEFAULT = { "Common", "Uncommon", "Rare" }
+	local STEAL_DEFAULT = { "Primordial", "Abyssal", "Godly" }
 	ST.Rarity = toSet(STEAL_DEFAULT)
 	_, stIncomeInput = TextInputCb(Page, "Min Income / s", "", "e.g. 500K, 1.2M", function(text)
 		local v = 0
@@ -5884,11 +5894,10 @@ local FarmSystem = {
 			ST.Rarity = toSet(chosen)
 		end,
 	})
-	ST.Mutation = toSet({ "Gold", "Diamond", "Lightning" })
 	Dropdown(Page, "Animal Mutation", {
 		Multi = true,
 		Options = MUT_NAMES,
-		Default = { "Gold", "Diamond", "Lightning" },
+		Default = { "Void", "Time", "Hacker" },
 		Placeholder = "None",
 		Desc = "Steal animals with the chosen mutation (rarity must match) even if the income is below Min Income",
 		OnChange = function(chosen)
