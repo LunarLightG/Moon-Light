@@ -178,6 +178,8 @@ local RARITY_STYLE = {
 	Spectral = { "#0A5C8A" },
 	Ethereal = { "#0E8F5E" },
 	Primordial = { "#B5179E", stroke = "#FFD6F5" },
+	Abyssal = { "#0B2447", stroke = "#4FD8FF" },
+	Godly = { "#FFE27A", stroke = "#FFFFFF" },
 }
 
 local function richEsc(v)
@@ -390,7 +392,7 @@ function Stats.AddEgg(info)
 		Kind = "Egg",
 		At = os.time(),
 		AfkAt = select(2, pcall(Stats.AfkClock)),
-		Name = info.Name or "?",
+		Name = (tostring(info.Name or "?"):gsub("^%d+:%s*", "")),
 		Rarity = info.Rarity,
 		MaxHealth = info.MaxHealth,
 		Size = info.Size,
@@ -421,8 +423,8 @@ local FarmSystem = {
 	local Page2 = CreatePage("Extras")
 	CreateTab("Extras", "9013498676")
 
-	local BREAK_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial" }
-	local STEAL_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial" }
+	local BREAK_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial", "Abyssal", "Godly" }
+	local STEAL_RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Cosmic", "Secret", "Celestial", "Inferno", "Void", "Omega", "Spectral", "Ethereal", "Primordial", "Abyssal", "Godly" }
 	local RANK = {}
 	for i, r in ipairs(STEAL_RARITIES) do
 		RANK[r] = i
@@ -642,7 +644,7 @@ local FarmSystem = {
 	SW = {
 		Running = false, Job = 0, Speed = 150,
 		Order = "Largest first",
-		Rarity = { Ethereal = true, Spectral = true, Omega = true, Void = true },
+		Rarity = { Common = true, Uncommon = true, Rare = true },
 		Yielded = false, Assumed = false, OnSig = nil, OffSig = nil, MonitorOff = false, ManualOff = false, EvtState = nil,
 		Working = false, TpMode = true,
 		Zone = {}, Pending = setmetatable({}, { __mode = "k" }), Skip = setmetatable({}, { __mode = "k" }),
@@ -654,7 +656,7 @@ local FarmSystem = {
 	}
 	TT = { Running = false, Job = 0, Speed = 150, TpMode = true, Working = false, Paused = false, EnabledSwing = false, Zone = {} }
 	GM = { Running = false, Job = 0, Working = false }
-	for z = 1, 14 do
+	for z = 1, 3 do
 		TT.Zone[z] = true
 		SW.Zone[z] = true
 	end
@@ -1259,7 +1261,7 @@ local FarmSystem = {
 	local RARITY_ZONES = {
 		Common = { 1 }, Uncommon = { 2 }, Rare = { 3 }, Epic = { 4 }, Legendary = { 5 }, Mythic = { 6 },
 		Divine = { 7 }, Cosmic = { 8 }, Secret = { 9 }, Celestial = { 10 }, Inferno = { 7, 11 },
-		Void = { 7, 12 }, Omega = { 7, 12, 13 }, Spectral = { 12, 13, 14 }, Ethereal = { 13, 14 }, Primordial = { 14 },
+		Void = { 7, 12 }, Omega = { 7, 12, 13 }, Spectral = { 12, 13, 14 }, Ethereal = { 13, 14, 15 }, Primordial = { 14, 15 }, Abyssal = { 15 }, Godly = { 15 },
 	}
 
 	local function swFarMapLoaded()
@@ -1270,7 +1272,7 @@ local FarmSystem = {
 		end
 		local chosen = {}
 		if next(SW.Zone) == nil then
-			for z = DIVINE_ZONE + 1, 14 do
+			for z = DIVINE_ZONE + 1, 15 do
 				chosen[z] = true
 			end
 		else
@@ -1357,7 +1359,7 @@ local FarmSystem = {
 		[1] = { -174.5, -81.5 }, [2] = { -304.0, -187.0 }, [3] = { -463.2, -315.8 },
 		[4] = { -681.8, -475.2 }, [5] = { -960.8, -694.2 }, [6] = { -1299.8, -973.2 },
 		[7] = { -1819.5, -1311.5 }, [8] = { -2338.0, -1831.0 }, [9] = { -2863.0, -2350.0 },
-		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 }, [14] = { -6732.0, -5834.0 },
+		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 }, [14] = { -6732.0, -5834.0 }, [15] = { -7565.0, -6732.0 },
 	}
 
 	local function swPatrol(id)
@@ -1370,14 +1372,14 @@ local FarmSystem = {
 						want[z] = true
 					end
 				else
-					for z = 1, 14 do
+					for z = 1, 15 do
 						want[z] = true
 					end
 				end
 			end
 		end
 		local zl = {}
-		for z = 1, 14 do
+		for z = 1, 15 do
 			if (next(SW.Zone) == nil or SW.Zone[z]) and want[z] then
 				zl[#zl + 1] = z
 			end
@@ -3406,7 +3408,7 @@ local FarmSystem = {
 	Dropdown(Page, "Egg Rarity", {
 		Multi = true,
 		Options = BREAK_RARITIES,
-		Default = { "Ethereal", "Spectral", "Omega", "Void" },
+		Default = { "Common", "Uncommon", "Rare" },
 		Placeholder = "Select rarity",
 		Desc = "Tap to choose one or more",
 		OnChange = function(chosen)
@@ -3420,13 +3422,13 @@ local FarmSystem = {
 	local nearestGuard, flingRemote, flingAt, tpReach
 	do
 	local SW_ZONES = {}
-	for z = 1, 14 do
+	for z = 1, 15 do
 		SW_ZONES[z] = "Zone " .. z
 	end
 	Dropdown(Page, "Egg Zone", {
 		Multi = true,
 		Options = SW_ZONES,
-		Default = SW_ZONES,
+		Default = { "Zone 1", "Zone 2", "Zone 3" },
 		Placeholder = "Select zone",
 		Format = function(names)
 			local nums = {}
@@ -3469,13 +3471,13 @@ local FarmSystem = {
 		end,
 	})
 	local TT_ZONES = {}
-	for z = 1, 14 do
+	for z = 1, 15 do
 		TT_ZONES[z] = "Zone " .. z
 	end
 	Dropdown(Page, "Titanic Zones", {
 		Multi = true,
 		Options = TT_ZONES,
-		Default = TT_ZONES,
+		Default = { "Zone 1", "Zone 2", "Zone 3" },
 		Placeholder = "Select zone",
 		Format = function(names)
 			local nums = {}
@@ -3511,12 +3513,12 @@ local FarmSystem = {
 		[1] = { -174.5, -81.5 }, [2] = { -304.0, -187.0 }, [3] = { -463.2, -315.8 },
 		[4] = { -681.8, -475.2 }, [5] = { -960.8, -694.2 }, [6] = { -1299.8, -973.2 },
 		[7] = { -1819.5, -1311.5 }, [8] = { -2338.0, -1831.0 }, [9] = { -2863.0, -2350.0 },
-		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 }, [14] = { -6732.0, -5834.0 },
+		[10] = { -3565.0, -2863.0 }, [11] = { -4276.0, -3565.0 }, [12] = { -5268.0, -4276.0 }, [13] = { -5834.0, -5268.0 }, [14] = { -6732.0, -5834.0 }, [15] = { -7565.0, -6732.0 },
 	}
 	stJob = 0
 
 	function inAnyZone(pos)
-		return pos.X <= ZONE_X[1][2] and pos.X >= ZONE_X[14][1] - 5
+		return pos.X <= ZONE_X[1][2] and pos.X >= ZONE_X[15][1] - 5
 	end
 	EventGate.Safe = SAFE
 	EventGate.InZone = inAnyZone
@@ -3914,8 +3916,6 @@ local FarmSystem = {
 		return inc >= minInc
 	end
 
-	-- exactly the buffs an animal can have: the children of AnimalOverhead > Mutation in the game (no "Lucky": that one
-	-- only exists on eggs, EggInfoUi)
 	MUT_NAMES = { "Gold", "Diamond", "Lightning", "Angelic", "Frozen", "Void", "Time", "Hacker" }
 	local MUT_CANON = {}
 	for _, n in ipairs(MUT_NAMES) do MUT_CANON[n:lower()] = n end
@@ -3937,7 +3937,7 @@ local FarmSystem = {
 		local found, source = {}, nil
 		local function addValue(v, from)
 			if typeof(v) ~= "string" or v == "" then return end
-			-- split "Gold, Diamond" / "Gold_Diamond" / "GoldDiamond" into whole words and keep only real buffs
+
 			local spaced = v:gsub("(%l)(%u)", "%1 %2"):gsub("[^%a]+", " ")
 			for word in spaced:gmatch("%a+") do
 				local canon = MUT_CANON[word:lower()]
@@ -4112,26 +4112,23 @@ local FarmSystem = {
 	end
 
 	function ST.Down()
-		if not flingRemote then
+		local c = LocalPlayer.Character
+		local rag = c and c:GetAttribute("Ragdolled")
+		if not flingRemote and rag == nil then
 			return true
 		end
 		local h = getHumanoid()
-		if not h then
+		if not h or h.Health <= 0 then
 			return false
 		end
-		local st = h:GetState()
-		if h.PlatformStand or st == Enum.HumanoidStateType.Ragdoll or st == Enum.HumanoidStateType.FallingDown
-			or st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.PlatformStanding then
-			return true
+		if ST.Released then
+			return false
 		end
-		local since = os.clock() - flingAt
-		if since <= 0.5 then
-			return true
+		local since = os.clock() - math.max(flingAt, ST.RagAt or -100)
+		if rag == true then
+			return since < 2.8
 		end
-		if st == Enum.HumanoidStateType.Freefall and since <= 4 then
-			return true
-		end
-		return false
+		return since <= 0.3
 	end
 
 	function ST.PrepareLanding(pos)
@@ -4238,7 +4235,7 @@ local FarmSystem = {
 			local np = Vector3.new(pos.X, GROUND_Y, pos.Z)
 			local far = (hrp.Position - np).Magnitude > 200
 			if far then
-				-- ask the game to stream the destination in, but do not wait: teleport right now
+
 				task.spawn(function()
 					pcall(function()
 						LocalPlayer:RequestStreamAroundAsync(np, 1.5)
@@ -4379,8 +4376,7 @@ local FarmSystem = {
 	end
 
 	local function firePrompt(prompt, attempt, id)
-		-- remember the prompt's own hold time before it is set to 0: some prompts (e.g. buffed animals) only accept a
-		-- real hold of that duration
+
 		ST.HoldOrig = ST.HoldOrig or setmetatable({}, { __mode = "k" })
 		local hd = ST.HoldOrig[prompt]
 		if hd == nil then
@@ -4399,7 +4395,7 @@ local FarmSystem = {
 		if fireproximityprompt then
 			pcall(fireproximityprompt, prompt)
 			if hd > 0.05 and attempt >= 2 then
-				-- the quick way did not pick it up: hold the button for real, for the prompt's own hold time
+
 				if attempt == 2 then
 					pcall(function()
 						local p = prompt.Parent
@@ -4426,7 +4422,7 @@ local FarmSystem = {
 					prompt.HoldDuration = 0
 				end)
 			elseif attempt % 8 == 0 then
-				-- slow fallback in the background, it never blocks the pickup loop
+
 				task.spawn(function()
 					pcall(function()
 						prompt:InputHoldBegin()
@@ -4456,8 +4452,7 @@ local FarmSystem = {
 		if pf and not o:IsDescendantOf(pf) then
 			return false, "it left AnimalPickups (already carried?)"
 		end
-		-- the scan already approved this animal (rarity / buff / income): reading the buff from the animal's
-		-- billboard again while standing next to it can flicker, so it is not judged a second time
+
 		if ST.Ok and ST.Ok[o] then
 			return true
 		end
@@ -4526,7 +4521,42 @@ local FarmSystem = {
 		local invalid = false
 		local t0, tries, lastGlobal, nextVerify = os.clock(), 0, 0, 0
 		local limit = 10
-		while stAlive(id) and os.clock() - t0 < limit do
+		do
+			local pre = fireproximityprompt and ST.findPrompt(obj, part, true)
+			local preOk = pre ~= nil
+			if preOk and not skipVerify then
+				preOk = verifyTarget(obj) and true or false
+			end
+			if preOk then
+				local okh, hd0 = pcall(function()
+					return pre.HoldDuration
+				end)
+				if okh and (tonumber(hd0) or 0) > 0.05 then
+					preOk = false
+				end
+			end
+			if preOk then
+				local pp0 = ST.promptPos(pre, part)
+				if pp0 then
+					lockPos = groundClamp(pp0)
+				end
+				local carriedBefore = LocalPlayer:GetAttribute("Carrying")
+				local tN, lastF, shots = os.clock(), 0, 0
+				while stAlive(id) and pre.Parent and os.clock() - tN < 1.5 do
+					if isStolen(obj, before) or (carriedBefore == nil and LocalPlayer:GetAttribute("Carrying") ~= nil) then
+						result = true
+						break
+					end
+					if shots < 2 and os.clock() - lastF >= 0.2 and pre.Enabled then
+						shots += 1
+						lastF = os.clock()
+						pcall(fireproximityprompt, pre)
+					end
+					RunService.Heartbeat:Wait()
+				end
+			end
+		end
+		while not result and stAlive(id) and os.clock() - t0 < limit do
 			if isStolen(obj, before) then
 				result = true
 				break
@@ -4555,10 +4585,10 @@ local FarmSystem = {
 				firePrompt(prompt, tries, id)
 				local hv = ST.HoldOrig and ST.HoldOrig[prompt]
 				if hv and hv > 0.05 then
-					limit = math.max(limit, 10 + 3 * hv) -- a prompt that needs a real hold gets more time
+					limit = math.max(limit, 10 + 3 * hv)
 				end
 				if tries == 4 then
-					-- once per animal: what is on it (helps to see why a buffed animal does not get picked up)
+
 					pcall(function()
 						local plist = {}
 						for _, d in ipairs(obj:GetDescendants()) do
@@ -4651,10 +4681,52 @@ local FarmSystem = {
 			track(r.OnClientEvent:Connect(function(kind)
 				if kind == "fling" then
 					flingAt = os.clock()
+					ST.Released = false
+				elseif kind == "release" then
+					ST.Released = true
 				end
 			end))
 		end
 	end)
+	do
+		local ragConn
+		local function watchRag(char)
+			if ragConn then
+				ragConn:Disconnect()
+				ragConn = nil
+			end
+			ST.RagAt = nil
+			ST.Released = false
+			if not char then
+				return
+			end
+			if char:GetAttribute("Ragdolled") == true then
+				ST.RagAt = os.clock() - 2.8
+			end
+			ragConn = char:GetAttributeChangedSignal("Ragdolled"):Connect(function()
+				if char ~= LocalPlayer.Character then
+					return
+				end
+				if char:GetAttribute("Ragdolled") == true then
+					if not ST.RagAt then
+						ST.RagAt = os.clock()
+						ST.Released = false
+					end
+				else
+					ST.RagAt = nil
+					ST.Released = false
+				end
+			end)
+		end
+		watchRag(LocalPlayer.Character)
+		track(LocalPlayer.CharacterAdded:Connect(watchRag))
+		addCleanup(function()
+			if ragConn then
+				ragConn:Disconnect()
+				ragConn = nil
+			end
+		end)
+	end
 
 	local function guardHitSince(mark)
 		if flingRemote then
@@ -4904,6 +4976,9 @@ local FarmSystem = {
 		end
 
 		local function holding()
+			if LocalPlayer:GetAttribute("Carrying") ~= nil then
+				return true
+			end
 			local cf = Workspace:FindFirstChild("CarriedAnimals")
 			if not cf then
 				return false
@@ -5040,7 +5115,6 @@ local FarmSystem = {
 		return reached
 	end
 
-	-- animals that were held and then put down: never picked up again (matched by name near where they were put down)
 	ST.Placed = {}
 	function ST.PlacedHas(name, pos)
 		for _, r in ipairs(ST.Placed) do
@@ -5055,8 +5129,6 @@ local FarmSystem = {
 		return ST.CE.Mode and ST.CE.Pos or SAFE
 	end
 
-	-- noclip the whole time Carry Escape is ON (walking, teleporting, waiting): applied on Stepped AND Heartbeat so the
-	-- game turning collisions back on in between cannot block us
 	ST.CE.Parts = { list = {}, char = nil, at = 0 }
 	function ST.CE.Noclip()
 		if not ST.CE.Running then
@@ -5185,9 +5257,6 @@ local FarmSystem = {
 		ST.HoldLanding(ST.CE.Pos, id)
 	end
 
-	-- Carry Escape, the short way (less than 2 zones from zone 1): walk to the escape spot with the character's own
-	-- speed (like Auto Collect Gems). Noclip is on the whole time, so walls do not stop it. If it cannot get there on
-	-- foot it teleports instead.
 	function ST.CE.WalkHome(id, holdFn)
 		holdFn = holdFn or ST.CE.Holding
 		setBusy(false)
@@ -5379,7 +5448,7 @@ local FarmSystem = {
 			local function toAnimal()
 				return e.part.Parent and e.part.Position or nil
 			end
-			-- true as soon as the "Steal" prompt is in range: stop walking and start collecting right away
+
 			local function promptReady()
 				if not e.part.Parent then
 					return false
@@ -5452,7 +5521,7 @@ local FarmSystem = {
 				local hpz = getHRP()
 
 				local zone1Out = ST.CE.Mode and ST.CE.InZone1(hpz and hpz.Position)
-				-- Carry Escape: 2+ zones away from zone 1 -> teleport (guard); closer -> walk home on foot
+
 				local ceFar = ST.CE.Mode and hpz ~= nil and zoneGap(hpz.Position, ST.CE.Pos) >= 2
 				local deliverTp
 				if ST.CE.Mode then
@@ -5469,6 +5538,9 @@ local FarmSystem = {
 				local recoveries, guardTries, gone, finished = 0, 0, false, false
 
 				local function holding()
+					if LocalPlayer:GetAttribute("Carrying") ~= nil then
+						return true
+					end
 					if not mine then
 						return carriedCount() > carriedBase
 					end
@@ -5536,7 +5608,7 @@ local FarmSystem = {
 				end
 				local function recover(hitByGuard)
 					if ST.CE.Mode and not hitByGuard then
-						-- Carry Escape: it was put down on purpose (not knocked out of the hands by a guard): do not take it again
+
 						finished = true
 						return true
 					end
@@ -5615,6 +5687,12 @@ local FarmSystem = {
 							setBusy(false)
 						else
 							moveTo(ST.CE.Dest(), id, 2.5)
+							local td = os.clock()
+							while stAlive(id) and holding() and ST.Down() and os.clock() - td < 1.5 do
+								ST.TpArmed = true
+								moveTo(ST.CE.Dest(), id, 2.5)
+								RunService.Heartbeat:Wait()
+							end
 						end
 						local t3 = os.clock()
 						local safeWait = ST.CE.Mode and 0 or 0.2
@@ -5660,7 +5738,7 @@ local FarmSystem = {
 				end
 
 				if finished and not gone and curObj then
-					-- remember this animal: once it is put down it is never picked up again
+
 					local nm, ob = curObj.Name, curObj
 					skip[ob] = math.huge
 					task.spawn(function()
@@ -5781,7 +5859,7 @@ local FarmSystem = {
 			end)
 		end
 	end, nil, "Best animal first. Pauses Auto Break while it works")
-	local STEAL_DEFAULT = { "Primordial", "Ethereal", "Spectral", "Omega", "Void", "Inferno", "Celestial" }
+	local STEAL_DEFAULT = { "Common", "Uncommon", "Rare" }
 	ST.Rarity = toSet(STEAL_DEFAULT)
 	_, stIncomeInput = TextInputCb(Page, "Min Income / s", "", "e.g. 500K, 1.2M", function(text)
 		local v = 0
@@ -5806,10 +5884,11 @@ local FarmSystem = {
 			ST.Rarity = toSet(chosen)
 		end,
 	})
+	ST.Mutation = toSet({ "Gold", "Diamond", "Lightning" })
 	Dropdown(Page, "Animal Mutation", {
 		Multi = true,
 		Options = MUT_NAMES,
-		Default = {},
+		Default = { "Gold", "Diamond", "Lightning" },
 		Placeholder = "None",
 		Desc = "Steal animals with the chosen mutation (rarity must match) even if the income is below Min Income",
 		OnChange = function(chosen)
